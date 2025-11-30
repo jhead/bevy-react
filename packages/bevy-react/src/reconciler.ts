@@ -167,7 +167,6 @@ class BevyHostConfig {
     const propsJson = serializeProps(props, type);
     const nodeId = __react_create_node(this.props.rootId, type, propsJson);
 
-    log("createInstance", type, nodeId, propsJson.substring(0, 100));
     const instance = {
       nodeId,
       type,
@@ -184,8 +183,6 @@ class BevyHostConfig {
     _rootContainer: Container,
     _hostContext: HostContext
   ): TextInstance => {
-    log("createTextInstance", text);
-
     const nodeId = __react_create_text(this.props.rootId, text);
 
     const instance = {
@@ -229,7 +226,6 @@ class BevyHostConfig {
     newProps: Props
   ): void => {
     const propsJson = serializeProps(newProps, type);
-    log("commitUpdate", instance.nodeId, type, propsJson.substring(0, 100));
     __react_update_node(this.props.rootId, instance.nodeId, propsJson);
     instance.props = newProps;
   }
@@ -239,8 +235,6 @@ class BevyHostConfig {
     _oldText: string,
     newText: string
   ): void => {
-    log("commitTextUpdate", textInstance.nodeId, newText);
-
     __react_update_text(this.props.rootId, textInstance.nodeId, newText);
     textInstance.text = newText;
   }
@@ -250,18 +244,16 @@ class BevyHostConfig {
   // -------------------
 
   appendInitialChild = (parent: Instance, child: Instance | TextInstance): void => {
-    log("appendInitialChild", parent.nodeId, child.nodeId);
-
     __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
+
     if ("children" in parent && "type" in child) {
       parent.children.push(child as Instance);
     }
   }
 
   appendChild = (parent: Instance, child: Instance | TextInstance): void => {
-    log("appendChild", parent.nodeId, child.nodeId);
-
     __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
+
     if ("children" in parent && "type" in child) {
       parent.children.push(child as Instance);
     }
@@ -271,14 +263,10 @@ class BevyHostConfig {
     container: Container,
     child: Instance | TextInstance
   ): void => {
-    log("appendChildToContainer", container.rootId, child.nodeId);
-
     __react_append_child(this.props.rootId, container.rootId, child.nodeId);
   }
 
   removeChild = (parent: Instance, child: Instance | TextInstance): void => {
-    log("removeChild", parent.nodeId, child.nodeId);
-
     __react_remove_child(this.props.rootId, parent.nodeId, child.nodeId);
     if ("children" in parent) {
       const idx = parent.children.findIndex((c) => c.nodeId === child.nodeId);
@@ -292,8 +280,6 @@ class BevyHostConfig {
     container: Container,
     child: Instance | TextInstance
   ): void => {
-    log("removeChildFromContainer", container.rootId, child.nodeId);
-
     __react_remove_child(this.props.rootId, container.rootId, child.nodeId);
   }
 
@@ -302,8 +288,6 @@ class BevyHostConfig {
     child: Instance | TextInstance,
     _beforeChild: Instance | TextInstance
   ): void => {
-    log("insertBefore", parent.nodeId, child.nodeId);
-
     // For now, we just append - proper ordering requires more RPC support
     __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
   }
@@ -313,13 +297,10 @@ class BevyHostConfig {
     child: Instance | TextInstance,
     _beforeChild: Instance | TextInstance
   ): void => {
-    log("insertInContainerBefore", container.rootId, child.nodeId);
-
     __react_append_child(this.props.rootId, container.rootId, child.nodeId);
   }
 
   clearContainer = (container: Container): void => {
-    log("clearContainer", this.props.rootId);
     __react_clear_container(this.props.rootId);
   }
 

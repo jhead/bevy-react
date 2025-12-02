@@ -44,6 +44,7 @@ mod native_functions;
 mod style;
 mod systems;
 mod vite;
+mod shim;
 
 pub use plugin::ReactPlugin;
 pub use client::*;

@@ -4,9 +4,9 @@
 
 use bevy::prelude::*;
 
-use crate::js_bevy::{JsClientResource, JsPlugin, JsPluginConfig};
+use crate::js_bevy::{JsClientResource, JsEngineExtensionComponent};
 use crate::react::ReactClient;
-use crate::react::native_functions::ReactJsCallback;
+use crate::react::native_functions::ReactJsExtension;
 use crate::react::systems::*;
 
 pub struct ReactPlugin;
@@ -15,23 +15,9 @@ impl Plugin for ReactPlugin {
     fn build(&self, app: &mut App) {
         log::info!("Building React plugin...");
 
-        // Create the React client and receiver for RPC communication
-        let (react_client, receiver) = ReactClient::new();
-
-        // Create the React JS callback that registers native functions
-        let react_callback = ReactJsCallback::new(react_client);
-
-        // Configure and add the JS plugin with React and Gen3D callbacks
-        let js_config = JsPluginConfig::new()
-            .with_callback(react_callback);
-
-        app.add_plugins(JsPlugin::new(js_config));
-
-        // Store the React message receiver
-        app.insert_resource(ReactMessageReceiver(receiver));
-
         app.init_resource::<ReactRootMap>()
             .init_resource::<FocusedNode>()
+            .add_systems(Startup, register_react_extension)
             .add_systems(Update, execute_react_scripts)
             .add_systems(
                 Update,
@@ -45,6 +31,15 @@ impl Plugin for ReactPlugin {
 
         log::info!("React plugin configured");
     }
+}
+
+/// System to register the React extension with the JS engine
+fn register_react_extension(mut commands: Commands) {
+    let (client, receiver) = ReactClient::new();
+    
+    let react_ext = ReactJsExtension::new(client);
+    commands.spawn(JsEngineExtensionComponent::new(react_ext));
+    commands.insert_resource(ReactMessageReceiver(receiver));
 }
 
 fn execute_react_scripts(

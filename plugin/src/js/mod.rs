@@ -4,10 +4,12 @@
 //! No Bevy dependencies - this can be used standalone.
 
 mod engine;
-mod protocol;
+mod client;
 mod websocket;
+mod esm;
+mod builder;
 
-pub use engine::{JsEngine, JsEngineClient, JsCommand};
-pub use protocol::{JsCallback, JsCallbackRegistry};
-pub use websocket::WebSocketJsCallback;
-
+pub use engine::{JsEngine, JsCommand};
+pub use client::JsEngineClient;
+pub use builder::{JsEngineBuilder, JsEngineExtension};
+pub use websocket::*;

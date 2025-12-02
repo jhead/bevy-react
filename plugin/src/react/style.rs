@@ -62,16 +62,16 @@ pub struct StyleProps {
 
     // Flexbox
     pub flex_direction: Option<String>,
-    pub flex_wrap: Option<String>,
+    pub _flex_wrap: Option<String>,
     pub flex_grow: Option<f32>,
     pub flex_shrink: Option<f32>,
     pub flex_basis: Option<CssValue>,
     pub align_items: Option<String>,
-    pub align_self: Option<String>,
-    pub align_content: Option<String>,
+    pub _align_self: Option<String>,
+    pub _align_content: Option<String>,
     pub justify_content: Option<String>,
-    pub justify_items: Option<String>,
-    pub justify_self: Option<String>,
+    pub _justify_items: Option<String>,
+    pub _justify_self: Option<String>,
 
     // Spacing
     pub margin: Option<CssValue>,
@@ -98,16 +98,16 @@ pub struct StyleProps {
     pub border_right: Option<CssValue>,
     pub border_bottom: Option<CssValue>,
     pub border_left: Option<CssValue>,
-    pub border_radius: Option<CssValue>,
+    pub _border_radius: Option<CssValue>,
 
     // Gap
-    pub gap: Option<CssValue>,
+    pub _gap: Option<CssValue>,
     pub row_gap: Option<CssValue>,
     pub column_gap: Option<CssValue>,
 
     // Display
-    pub display: Option<String>,
-    pub overflow: Option<String>,
+    pub _display: Option<String>,
+    pub _overflow: Option<String>,
 
     // Colors (for BackgroundColor, BorderColor)
     pub background_color: Option<String>,

@@ -2,27 +2,31 @@
 //!
 //! Registers React reconciler native functions with the JS engine.
 
-use boa_engine::{Context, JsResult, JsString, JsValue, NativeFunction};
-use std::sync::Arc;
+use boa_engine::{Context, JsError, JsResult, JsString, JsValue, NativeFunction};
 
-use crate::js::JsCallback;
-use crate::react::ReactClient;
+use crate::{
+    js::{JsEngineClient, JsEngineExtension},
+    react::{ReactClient, shim::register_environment_shims},
+};
 
 /// React callback provider that registers native functions for the React reconciler.
-pub struct ReactJsCallback {
+#[derive(Clone)]
+pub struct ReactJsExtension {
     client: ReactClient,
 }
 
-impl ReactJsCallback {
-    pub fn new(client: ReactClient) -> Arc<Self> {
-        Arc::new(Self { client })
+impl ReactJsExtension {
+    pub fn new(client: ReactClient) -> Self {
+        Self { client }
     }
 }
 
-impl JsCallback for ReactJsCallback {
-    fn register(&self, context: &mut Context) {
-        let client = self.client.clone();
-        register_react_functions(context, client);
+impl JsEngineExtension for ReactJsExtension {
+    fn register(&self, context: &mut Context, _client: JsEngineClient) -> Result<(), JsError> {
+        log::info!("Registering React native functions");
+        register_environment_shims(context);
+        register_react_functions(context, self.client.clone());
+        Ok(())
     }
 }
 
@@ -37,9 +41,7 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
                 move |_this: &JsValue,
                       args: &[JsValue],
                       client: &ReactClient,
-                      ctx: &mut Context| {
-                    create_node_fn(args, client, ctx)
-                },
+                      ctx: &mut Context| { create_node_fn(args, client, ctx) },
                 react_client.clone(),
             ),
         )
@@ -54,9 +56,7 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
                 move |_this: &JsValue,
                       args: &[JsValue],
                       client: &ReactClient,
-                      ctx: &mut Context| {
-                    create_text_fn(args, client, ctx)
-                },
+                      ctx: &mut Context| { create_text_fn(args, client, ctx) },
                 react_client.clone(),
             ),
         )
@@ -71,9 +71,7 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
                 move |_this: &JsValue,
                       args: &[JsValue],
                       client: &ReactClient,
-                      ctx: &mut Context| {
-                    append_child_fn(args, client, ctx)
-                },
+                      ctx: &mut Context| { append_child_fn(args, client, ctx) },
                 react_client.clone(),
             ),
         )
@@ -88,9 +86,7 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
                 move |_this: &JsValue,
                       args: &[JsValue],
                       client: &ReactClient,
-                      ctx: &mut Context| {
-                    remove_child_fn(args, client, ctx)
-                },
+                      ctx: &mut Context| { remove_child_fn(args, client, ctx) },
                 react_client.clone(),
             ),
         )
@@ -105,9 +101,7 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
                 move |_this: &JsValue,
                       args: &[JsValue],
                       client: &ReactClient,
-                      ctx: &mut Context| {
-                    update_node_fn(args, client, ctx)
-                },
+                      ctx: &mut Context| { update_node_fn(args, client, ctx) },
                 react_client.clone(),
             ),
         )
@@ -122,9 +116,7 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
                 move |_this: &JsValue,
                       args: &[JsValue],
                       client: &ReactClient,
-                      ctx: &mut Context| {
-                    update_text_fn(args, client, ctx)
-                },
+                      ctx: &mut Context| { update_text_fn(args, client, ctx) },
                 react_client.clone(),
             ),
         )
@@ -139,9 +131,7 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
                 move |_this: &JsValue,
                       args: &[JsValue],
                       client: &ReactClient,
-                      ctx: &mut Context| {
-                    destroy_node_fn(args, client, ctx)
-                },
+                      ctx: &mut Context| { destroy_node_fn(args, client, ctx) },
                 react_client.clone(),
             ),
         )
@@ -156,9 +146,7 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
                 move |_this: &JsValue,
                       args: &[JsValue],
                       client: &ReactClient,
-                      ctx: &mut Context| {
-                    clear_container_fn(args, client, ctx)
-                },
+                      ctx: &mut Context| { clear_container_fn(args, client, ctx) },
                 react_client.clone(),
             ),
         )
@@ -336,7 +324,11 @@ fn destroy_node_fn(
 }
 
 /// __react_clear_container()
-fn clear_container_fn(args: &[JsValue], client: &ReactClient, _ctx: &mut Context) -> JsResult<JsValue> {
+fn clear_container_fn(
+    args: &[JsValue],
+    client: &ReactClient,
+    _ctx: &mut Context,
+) -> JsResult<JsValue> {
     let root_id = args
         .first()
         .and_then(|v| v.as_string())

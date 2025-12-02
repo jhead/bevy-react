@@ -1,7 +1,7 @@
 use boa_gc::{Finalize, Trace, empty_trace};
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::sync::Mutex;
 
 /// Global counter for node IDs (used across threads)
 static NODE_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -46,19 +46,16 @@ pub enum ReactClientProto {
 
 /// Thread-safe receiver wrapper for the Bevy system
 pub struct ReactClientReceiver {
-    rx: Mutex<Receiver<ReactClientProto>>,
+    rx: Arc<Mutex<Receiver<ReactClientProto>>>,
 }
 
 impl ReactClientReceiver {
     /// Try to receive the next message without blocking
     pub fn try_recv(&self) -> Option<ReactClientProto> {
-        self.rx.lock().ok()?.try_recv().ok()
+        let rx = self.rx.lock().ok()?;
+        rx.try_recv().ok()  
     }
 }
-
-// Implement Send + Sync for ReactClientReceiver
-unsafe impl Send for ReactClientReceiver {}
-unsafe impl Sync for ReactClientReceiver {}
 
 impl ReactClient {
     /// Create a new ReactClient and its corresponding receiver
@@ -68,7 +65,7 @@ impl ReactClient {
 
         (
             ReactClient { tx },
-            ReactClientReceiver { rx: Mutex::new(rx) },
+            ReactClientReceiver { rx: Arc::new(Mutex::new(rx)) },
         )
     }
 

@@ -1,5 +1,6 @@
 use boa_engine::module::ModuleLoader;
 use boa_engine::{Context, JsError, JsNativeError, JsObject, JsString, Module, Source};
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::{self, Runtime};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -7,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 pub(crate) struct FetchModuleLoader {
+    #[cfg(not(target_arch = "wasm32"))]
     runtime: Runtime,
     local_modules: RefCell<HashMap<String, Module>>,
 }
@@ -14,6 +16,7 @@ pub(crate) struct FetchModuleLoader {
 impl FetchModuleLoader {
     pub(crate) fn new() -> Self {
         Self {
+            #[cfg(not(target_arch = "wasm32"))]
             runtime: runtime::Builder::new_multi_thread().enable_all().build().unwrap(),
             local_modules: RefCell::new(HashMap::new()),
         }
@@ -100,6 +103,7 @@ impl ModuleLoader for FetchModuleLoader {
 
         // Run reqwest in a blocking task using the static runtime,
         // because this might be called from a context without a tokio runtime (e.g. Bevy ECS thread).
+        #[cfg(not(target_arch = "wasm32"))]
         let body = self.runtime.block_on(async {
             let response = reqwest::get(&resolved_specifier).await.map_err(|e| {
                 JsError::from_native(
@@ -119,6 +123,27 @@ impl ModuleLoader for FetchModuleLoader {
 
             Ok::<_, boa_engine::JsError>(body)
         })?;
+
+        #[cfg(target_arch = "wasm32")]
+        let body = {
+            let response = reqwest::get(&resolved_specifier).await.map_err(|e| {
+                JsError::from_native(
+                    JsNativeError::typ()
+                        .with_message(format!("Fetch error: {}", e.to_string()))
+                        .into(),
+                )
+            })?;
+
+            let body = response.text().await.map_err(|e| {
+                JsError::from_native(
+                    JsNativeError::typ()
+                        .with_message(format!("Fetch resposne error: {}", e.to_string()))
+                        .into(),
+                )
+            })?;
+
+            body
+        };
 
         let src = Source::from_bytes(body.as_bytes()).with_path(Path::new(&resolved_specifier));
         let module = Module::parse(src, None, &mut context.borrow_mut())?;

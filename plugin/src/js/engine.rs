@@ -1,7 +1,9 @@
-//! JavaScript Engine
+//! JavaScript Engine (native)
 //!
-//! Manages the Boa JavaScript runtime with a dedicated worker thread
-//! and proper event loop integration.
+//! Manages the Boa JavaScript runtime on a dedicated worker thread.
+//! Commands arrive via an `mpsc` channel; the thread blocks on `recv()` between frames.
+//! The two-thread design allows Boa closures to capture `JsEngineClient` (an `mpsc::Sender`)
+//! and synchronously request data from Bevy without needing globals or unsafe statics.
 
 use boa_engine::{Context, JsError, Module, Source};
 use std::sync::Arc;
@@ -14,21 +16,14 @@ use crate::js::esm::FetchModuleLoader;
 
 /// Commands that can be sent to the JS engine thread.
 pub enum JsCommand {
-    /// Load an ESM module with the given name and source.
     LoadEsmModule { name: String, source: String },
-    /// Execute a JS script (non-module).
     Execute { source: String },
-    /// Register an extension with the JS engine.
-    RegisterExtension {
-        extension: Arc<Box<dyn JsEngineExtension>>,
-    },
-    /// Flush the event loop (run pending jobs and timers).
+    RegisterExtension { extension: Arc<Box<dyn JsEngineExtension>> },
     FlushEventLoop,
-    /// Shutdown the JS engine.
     Shutdown,
 }
 
-/// JavaScript engine with dedicated worker thread.
+/// JavaScript engine with a dedicated worker thread.
 pub struct JsEngine {
     pub(crate) client: JsEngineClient,
     pub(crate) context_builder: Box<dyn FnOnce() -> Result<Context, JsError> + Send + Sync>,
@@ -36,7 +31,7 @@ pub struct JsEngine {
 }
 
 impl JsEngine {
-    /// Start a new JS engine with the given callback registry.
+    /// Spawn the JS engine thread and return the client handle.
     pub fn start(self) -> Result<JsEngineClient, JsError> {
         let client = self.client.clone();
 
@@ -55,50 +50,18 @@ impl JsEngine {
     }
 }
 
-/// Main loop for the JS engine thread.
+/// Main loop for the JS engine thread — blocks on `recv()` between commands.
 fn run_js_loop(mut context: Context, receiver: Receiver<JsCommand>, client: JsEngineClient) {
     log::info!("JS runtime initialized");
 
-    // Process commands
     loop {
         match receiver.recv() {
-            Ok(JsCommand::Execute { source }) => {
-                log::info!("Executing script ({} bytes)...", source.len());
-
-                let source = Source::from_bytes(source.as_bytes());
-
-                if let Err(e) = context.eval(source) {
-                    log::error!("Failed to execute script: {:?}", e);
+            Ok(cmd) => {
+                let is_shutdown = matches!(cmd, JsCommand::Shutdown);
+                process_js_command(&mut context, cmd, &client);
+                if is_shutdown {
+                    break;
                 }
-
-                flush_event_loop(&mut context);
-            }
-            Ok(JsCommand::LoadEsmModule { name, source }) => {
-                log::info!("Loading ES module {} ({} bytes)...", name, source.len());
-
-                let source = Source::from_bytes(source.as_bytes());
-                let module = Module::parse(source, None, &mut context).unwrap();
-                let _promise = module.load_link_evaluate(&mut context);
-
-                if let Some(loader) = context.downcast_module_loader::<FetchModuleLoader>() {
-                    log::info!("Registering ESM module: {}", name);
-                    loader.insert(name, module);
-                }
-
-                flush_event_loop(&mut context);
-            }
-            Ok(JsCommand::RegisterExtension { extension }) => {
-                if let Err(e) = extension.register(&mut context, client.clone()) {
-                    log::error!("Failed to register extension: {:?}", e);
-                }
-                flush_event_loop(&mut context);
-            }
-            Ok(JsCommand::FlushEventLoop) => {
-                flush_event_loop(&mut context);
-            }
-            Ok(JsCommand::Shutdown) => {
-                log::info!("JS engine shutting down");
-                break;
             }
             Err(e) => {
                 log::error!("JS engine channel error: {}", e);
@@ -110,7 +73,42 @@ fn run_js_loop(mut context: Context, receiver: Receiver<JsCommand>, client: JsEn
     log::info!("JS engine thread stopped");
 }
 
-/// Flush the event loop: process pending events, run microtasks (Jobs), and pending macrotasks (timers).
+fn process_js_command(context: &mut Context, cmd: JsCommand, client: &JsEngineClient) {
+    match cmd {
+        JsCommand::Execute { source } => {
+            log::info!("Executing script ({} bytes)...", source.len());
+            let source = Source::from_bytes(source.as_bytes());
+            if let Err(e) = context.eval(source) {
+                log::error!("Failed to execute script: {:?}", e);
+            }
+            flush_event_loop(context);
+        }
+        JsCommand::LoadEsmModule { name, source } => {
+            log::info!("Loading ES module {} ({} bytes)...", name, source.len());
+            let source = Source::from_bytes(source.as_bytes());
+            let module = Module::parse(source, None, context).unwrap();
+            let _promise = module.load_link_evaluate(context);
+            if let Some(loader) = context.downcast_module_loader::<FetchModuleLoader>() {
+                log::info!("Registering ESM module: {}", name);
+                loader.insert(name, module);
+            }
+            flush_event_loop(context);
+        }
+        JsCommand::RegisterExtension { extension } => {
+            if let Err(e) = extension.register(context, client.clone()) {
+                log::error!("Failed to register extension: {:?}", e);
+            }
+            flush_event_loop(context);
+        }
+        JsCommand::FlushEventLoop => {
+            flush_event_loop(context);
+        }
+        JsCommand::Shutdown => {
+            log::info!("JS engine shutting down");
+        }
+    }
+}
+
 fn flush_event_loop(context: &mut Context) {
     if let Err(e) = context.run_jobs() {
         if let Some(e) = e.as_opaque() {

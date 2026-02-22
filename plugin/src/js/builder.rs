@@ -1,25 +1,45 @@
+use std::rc::Rc;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::{self, Receiver};
+#[cfg(target_arch = "wasm32")]
 use std::{
-    rc::Rc,
-    sync::mpsc::{self, Receiver},
+    collections::VecDeque,
+    sync::{Arc, Mutex},
 };
 
 use boa_engine::{Context, JsError};
 use boa_runtime::extensions::{ConsoleExtension, MicrotaskExtension, TimeoutExtension};
 
-use crate::js::{JsCommand, JsEngine, JsEngineClient, esm::FetchModuleLoader};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::js::JsCommand;
+use crate::js::{JsEngine, JsEngineClient, esm::FetchModuleLoader};
 
 pub struct JsEngineBuilder {
     extensions: Vec<Box<dyn JsEngineExtension>>,
     client: JsEngineClient,
+    #[cfg(not(target_arch = "wasm32"))]
     receiver: Receiver<JsCommand>,
 }
 
 impl JsEngineBuilder {
     pub fn new() -> Self {
-        let (sender, receiver) = mpsc::channel();
+        #[cfg(not(target_arch = "wasm32"))]
+        let (sender, receiver) = mpsc::channel::<JsCommand>();
+
         JsEngineBuilder {
             extensions: vec![],
-            client: JsEngineClient { sender },
+            client: JsEngineClient {
+                #[cfg(not(target_arch = "wasm32"))]
+                sender,
+                // WASM: context slot starts empty; filled by JsEngine::start().
+                #[cfg(target_arch = "wasm32")]
+                context: Arc::new(Mutex::new(None)),
+                // WASM: command queue instead of an mpsc channel.
+                #[cfg(target_arch = "wasm32")]
+                queue: Arc::new(Mutex::new(VecDeque::new())),
+            },
+            #[cfg(not(target_arch = "wasm32"))]
             receiver,
         }
     }
@@ -29,6 +49,7 @@ impl JsEngineBuilder {
         self
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn build(self) -> Result<JsEngine, JsError> {
         let client = self.client.clone();
         let extensions = self.extensions;
@@ -37,6 +58,19 @@ impl JsEngineBuilder {
             client: self.client,
             context_builder: Box::new(move || build_context(&extensions, client.clone())),
             receiver: self.receiver,
+        })
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn build(self) -> Result<JsEngine, JsError> {
+        // Build and register extensions synchronously — the client's queue is available
+        // for any extension that enqueues commands during registration; they'll be
+        // processed on the first flush_event_loop call after start().
+        let context = build_context(&self.extensions, self.client.clone())?;
+
+        Ok(JsEngine {
+            client: self.client,
+            context,
         })
     }
 }
@@ -53,7 +87,6 @@ fn build_context(
         .module_loader(Rc::new(FetchModuleLoader::new()))
         .build()?;
 
-    // Register Boa runtime extensions
     boa_runtime::register(
         (
             ConsoleExtension::default(),

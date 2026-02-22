@@ -3,7 +3,9 @@
 use bevy::prelude::*;
 use std::{ops::Deref, sync::Arc};
 
-use crate::js::{ JsEngineBuilder, JsEngineClient, JsEngineExtension, WebSocketExtension};
+use crate::js::{ JsEngineBuilder, JsEngineClient, JsEngineExtension};
+#[cfg(feature = "websocket")]
+use crate::js::WebSocketExtension;
 
 /// Bevy Resource wrapper for JsEngineClient.
 ///
@@ -40,10 +42,14 @@ impl Plugin for JsPlugin {
     fn build(&self, app: &mut App) {
         log::info!("Starting JS engine...");
 
-        let engine = JsEngineBuilder::new()
-            .with_extension(WebSocketExtension {})
-            .build()
-            .unwrap();
+        let mut builder = JsEngineBuilder::new();
+        
+        #[cfg(feature = "websocket")]
+        {
+            builder = builder.with_extension(WebSocketExtension {});
+        }
+        
+        let engine = builder.build().unwrap();
 
         let client = engine.start().unwrap();
 

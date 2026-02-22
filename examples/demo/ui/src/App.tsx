@@ -9,6 +9,7 @@ function Header() {
         width: "100%",
         padding: 32,
         backgroundColor: "#1a1a2e",
+        flexDirection: "column",
         justifyContent: "center",
         alignItems: "center",
         marginBottom: 24,
@@ -214,6 +215,7 @@ function TextInputCard() {
             backgroundColor: "#0f3460",
             borderRadius: 6,
             marginTop: 8,
+            flexDirection: "column",
           }}
         >
           <Text

@@ -1,22 +1,80 @@
-use std::sync::{Arc, mpsc};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc;
+use std::sync::Arc;
+#[cfg(target_arch = "wasm32")]
+use std::sync::Mutex;
+#[cfg(target_arch = "wasm32")]
+use std::collections::VecDeque;
 
 use crate::js::{JsCommand, JsEngineExtension};
 
-/// Client handle for communicating with the JS engine thread.
+/// WASM: wraps `boa_engine::Context` to satisfy `Send + Sync` bounds required by `Arc<Mutex<T>>`.
+///
+/// Sound because WASM targets are single-threaded — the Mutex never actually contends.
+#[cfg(target_arch = "wasm32")]
+pub(crate) struct WasmContext(pub(crate) boa_engine::Context);
+
+#[cfg(target_arch = "wasm32")]
+unsafe impl Send for WasmContext {}
+#[cfg(target_arch = "wasm32")]
+unsafe impl Sync for WasmContext {}
+
+/// Client handle for communicating with the JS engine.
+///
+/// On native, wraps an `mpsc::Sender` that dispatches commands to the dedicated JS thread.
+/// On WASM, wraps a shared command queue drained synchronously on each `flush_event_loop` call,
+/// driven by Bevy's frame update — no dedicated thread, no polling loop.
 #[derive(Clone)]
 pub struct JsEngineClient {
-    pub sender: mpsc::Sender<JsCommand>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) sender: mpsc::Sender<JsCommand>,
+
+    /// The Boa context, set once by `JsEngine::start()`.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) context: Arc<Mutex<Option<WasmContext>>>,
+
+    /// Commands enqueued by Bevy systems (or JS callbacks calling back into Rust).
+    /// Drained synchronously on each `flush_event_loop` call.
+    /// Kept separate from `context` so that JS-triggered `execute()` calls during
+    /// flush don't deadlock — they lock this queue, not the context.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) queue: Arc<Mutex<VecDeque<JsCommand>>>,
 }
 
 impl JsEngineClient {
-    /// Send a tick command to flush the JS event loop.
+    /// Flush the JS event loop — called every Bevy frame by `tick_js_engine`.
+    ///
+    /// On native, signals the JS thread to run Boa's job queue.
+    /// On WASM, drains the command queue and runs all pending jobs synchronously.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn flush_event_loop(&self) {
         if let Err(e) = self.sender.send(JsCommand::FlushEventLoop) {
             log::warn!("Failed to send flush event loop command: {}", e);
         }
     }
 
-    /// Load an ES module.
+    #[cfg(target_arch = "wasm32")]
+    pub fn flush_event_loop(&self) {
+        // Drain the queue first, releasing the lock before we touch the context.
+        // This allows JS callbacks that fire during command processing to enqueue
+        // new commands (via execute/load_esm_module) without deadlocking.
+        let commands: Vec<JsCommand> = {
+            let mut q = self.queue.lock().unwrap();
+            q.drain(..).collect()
+        };
+
+        if let Ok(mut ctx_opt) = self.context.lock() {
+            if let Some(ctx) = ctx_opt.as_mut() {
+                for cmd in commands {
+                    wasm::process_command(&mut ctx.0, cmd, self);
+                }
+                wasm::flush_jobs(&mut ctx.0);
+            }
+        }
+    }
+
+    /// Load an ES module by name and source.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_esm_module(&self, name: impl Into<String>, source: impl Into<String>) {
         if let Err(e) = self.sender.send(JsCommand::LoadEsmModule {
             name: name.into(),
@@ -26,7 +84,16 @@ impl JsEngineClient {
         }
     }
 
-    /// Execute a script.
+    #[cfg(target_arch = "wasm32")]
+    pub fn load_esm_module(&self, name: impl Into<String>, source: impl Into<String>) {
+        self.queue.lock().unwrap().push_back(JsCommand::LoadEsmModule {
+            name: name.into(),
+            source: source.into(),
+        });
+    }
+
+    /// Execute a JS script.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn execute(&self, source: impl Into<String>) {
         if let Err(e) = self.sender.send(JsCommand::Execute {
             source: source.into(),
@@ -35,15 +102,95 @@ impl JsEngineClient {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn execute(&self, source: impl Into<String>) {
+        self.queue
+            .lock()
+            .unwrap()
+            .push_back(JsCommand::Execute { source: source.into() });
+    }
+
     /// Register an extension with the JS engine.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn register_extension(&self, extension: Arc<Box<dyn JsEngineExtension>>) {
-        if let Err(e) = self.sender.send(JsCommand::RegisterExtension { extension: extension.clone() }) {
+        if let Err(e) = self.sender.send(JsCommand::RegisterExtension { extension }) {
             log::error!("Failed to send register extension command: {}", e);
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub fn register_extension(&self, extension: Arc<Box<dyn JsEngineExtension>>) {
+        self.queue
+            .lock()
+            .unwrap()
+            .push_back(JsCommand::RegisterExtension { extension });
+    }
+
     /// Shutdown the JS engine.
     pub fn shutdown(&self) {
-        let _ = self.sender.send(JsCommand::Shutdown);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = self.sender.send(JsCommand::Shutdown);
+        }
+        // WASM: no dedicated thread to signal; dropping the engine is sufficient.
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use boa_engine::{Context, Module, Source};
+    use crate::js::JsCommand;
+    use crate::js::esm::FetchModuleLoader;
+    use super::JsEngineClient;
+
+    /// Process a single command against the Boa context.
+    ///
+    /// Called with the context lock held but the queue lock released, so that
+    /// any `client.execute()` calls triggered by JS code enqueue into the queue
+    /// without deadlocking — they'll be picked up on the next frame.
+    pub(super) fn process_command(context: &mut Context, cmd: JsCommand, client: &JsEngineClient) {
+        match cmd {
+            JsCommand::Execute { source } => {
+                log::info!("Executing script ({} bytes)...", source.len());
+                let src = Source::from_bytes(source.as_bytes());
+                if let Err(e) = context.eval(src) {
+                    log::error!("Failed to execute script: {:?}", e);
+                }
+                flush_jobs(context);
+            }
+            JsCommand::LoadEsmModule { name, source } => {
+                log::info!("Loading ES module {} ({} bytes)...", name, source.len());
+                let src = Source::from_bytes(source.as_bytes());
+                match Module::parse(src, None, context) {
+                    Ok(module) => {
+                        let _promise = module.load_link_evaluate(context);
+                        if let Some(loader) = context.downcast_module_loader::<FetchModuleLoader>() {
+                            log::info!("Registering ESM module: {}", name);
+                            loader.insert(name, module);
+                        }
+                    }
+                    Err(e) => log::error!("Failed to parse ESM module {}: {:?}", name, e),
+                }
+                flush_jobs(context);
+            }
+            JsCommand::RegisterExtension { extension } => {
+                if let Err(e) = extension.register(context, client.clone()) {
+                    log::error!("Failed to register extension: {:?}", e);
+                }
+                flush_jobs(context);
+            }
+            JsCommand::FlushEventLoop | JsCommand::Shutdown => {}
+        }
+    }
+
+    pub(super) fn flush_jobs(context: &mut Context) {
+        if let Err(e) = context.run_jobs() {
+            if let Some(e) = e.as_opaque() {
+                let msg = e.to_json(context).unwrap_or_default();
+                log::error!("Error running Boa jobs: {:?}", msg);
+            } else {
+                log::error!("Error running Boa jobs: {:?}", e);
+            }
+        }
     }
 }

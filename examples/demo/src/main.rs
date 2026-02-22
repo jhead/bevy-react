@@ -1,9 +1,10 @@
 use bevy::prelude::*;
-use bevy_react::{ReactBundle, ViteDevSource, ReactPlugin};
+use bevy_react::{ReactBundle, ReactPlugin, ViteDevSource, js_bevy::JsPlugin};
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(JsPlugin)
         .add_plugins(ReactPlugin)
         .add_systems(Startup, setup)
         .run();

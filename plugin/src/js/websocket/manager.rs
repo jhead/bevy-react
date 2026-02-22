@@ -80,7 +80,8 @@ impl WebSocketManager {
         
         let client = self.client.clone();
 
-        // Spawn on a separate thread with its own tokio runtime
+        // Spawn on a separate thread with its own tokio runtime (native only)
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -313,6 +314,7 @@ impl WebSocketManager {
                 log::info!("[WebSocket {}] Connection ended", id);
             });
         });
+        #[cfg(not(target_arch = "wasm32"))]
 
         id
     }

@@ -183,14 +183,16 @@ mod wasm {
         }
     }
 
-    pub(super) fn flush_jobs(context: &mut Context) {
-        if let Err(e) = context.run_jobs() {
-            if let Some(e) = e.as_opaque() {
-                let msg = e.to_json(context).unwrap_or_default();
-                log::error!("Error running Boa jobs: {:?}", msg);
-            } else {
-                log::error!("Error running Boa jobs: {:?}", e);
-            }
-        }
+    pub(super) fn flush_jobs(_context: &mut Context) {
+        // No-op on WASM.
+        //
+        // `Context::run_jobs()` calls `futures_lite::block_on(run_jobs_async())` which
+        // spins in a tight `park()`/`poll()` loop on wasm32 (the Parker has no way to
+        // truly block a single-threaded WASM runtime), causing the browser to kill the
+        // script with a "Script terminated by timeout" error.
+        //
+        // Game scripts are fully synchronous, so there are no promise jobs to flush.
+        // If async JS (fetch, setTimeout, etc.) is ever needed on WASM, replace this
+        // with a `wasm_bindgen_futures::spawn_local` approach.
     }
 }

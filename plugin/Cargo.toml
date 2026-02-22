@@ -31,6 +31,7 @@ reqwest = { version = "0.12.24", optional = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1.48", default-features = false, features = ["sync", "macros"] }
 reqwest = { version = "0.12.24", optional = true, default-features = false }
+js-sys = "0.3"
 
 [features]
 default = ["websocket", "fetch"]

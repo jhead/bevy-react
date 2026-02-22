@@ -9,6 +9,19 @@ use std::{
 };
 
 use boa_engine::{Context, JsError};
+
+/// WASM-compatible clock for Boa — uses js_sys::Date::now() instead of
+/// std::time::SystemTime::now(), which panics on wasm32-unknown-unknown.
+#[cfg(target_arch = "wasm32")]
+struct WasmClock;
+
+#[cfg(target_arch = "wasm32")]
+impl boa_engine::context::time::Clock for WasmClock {
+    fn now(&self) -> boa_engine::context::time::JsInstant {
+        let millis = js_sys::Date::now() as u64;
+        boa_engine::context::time::JsInstant::new(millis / 1000, ((millis % 1000) * 1_000_000) as u32)
+    }
+}
 use boa_runtime::extensions::{ConsoleExtension, MicrotaskExtension, TimeoutExtension};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -83,9 +96,16 @@ fn build_context(
     extensions: &Vec<Box<dyn JsEngineExtension>>,
     client: JsEngineClient,
 ) -> Result<Context, JsError> {
-    let mut context = Context::builder()
+    #[cfg(not(target_arch = "wasm32"))]
+    let context_builder = Context::builder()
+        .module_loader(Rc::new(FetchModuleLoader::new()));
+
+    #[cfg(target_arch = "wasm32")]
+    let context_builder = Context::builder()
         .module_loader(Rc::new(FetchModuleLoader::new()))
-        .build()?;
+        .clock(Rc::new(WasmClock));
+
+    let mut context = context_builder.build()?;
 
     boa_runtime::register(
         (

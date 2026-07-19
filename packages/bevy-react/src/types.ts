@@ -105,6 +105,8 @@ export interface BevyStyle {
   backgroundImage?: string;
   backgroundGradient?: string;
   boxShadow?: string;
+  /** CSS text-shadow → Bevy `TextShadow` (e.g. `"2px 3px 0 black"`). */
+  textShadow?: string;
   /** 0–1 or percentage string. Bevy has no UiOpacity; multiply into colors in render. */
   opacity?: string | number;
   zIndex?: number;

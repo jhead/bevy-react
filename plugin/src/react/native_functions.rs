@@ -44,7 +44,7 @@ impl JsEngineExtension for ReactJsExtension {
             self.client.clone(),
             self.event_queue.clone(),
             self.reload_flag.clone(),
-        );
+        )?;
         Ok(())
     }
 }
@@ -55,192 +55,210 @@ fn register_react_functions(
     react_client: ReactClient,
     event_queue: ReactEventQueue,
     reload_flag: ReactReloadFlag,
-) {
+) -> Result<(), JsError> {
     // __react_create_node(type: string, props_json: string) -> number
-    context
-        .register_global_callable(
-            JsString::from("__react_create_node"),
-            2,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      args: &[JsValue],
-                      client: &ReactClient,
-                      ctx: &mut Context| { create_node_fn(args, client, ctx) },
-                react_client.clone(),
-            ),
-        )
-        .expect("Failed to register __react_create_node");
+    context.register_global_callable(
+        JsString::from("__react_create_node"),
+        2,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                create_node_fn(args, client, ctx)
+            },
+            react_client.clone(),
+        ),
+    )?;
 
     // __react_create_text(content: string) -> number
-    context
-        .register_global_callable(
-            JsString::from("__react_create_text"),
-            1,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      args: &[JsValue],
-                      client: &ReactClient,
-                      ctx: &mut Context| { create_text_fn(args, client, ctx) },
-                react_client.clone(),
-            ),
-        )
-        .expect("Failed to register __react_create_text");
+    context.register_global_callable(
+        JsString::from("__react_create_text"),
+        1,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                create_text_fn(args, client, ctx)
+            },
+            react_client.clone(),
+        ),
+    )?;
 
     // __react_append_child(parent_id: number, child_id: number) -> void
-    context
-        .register_global_callable(
-            JsString::from("__react_append_child"),
-            2,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      args: &[JsValue],
-                      client: &ReactClient,
-                      ctx: &mut Context| { append_child_fn(args, client, ctx) },
-                react_client.clone(),
-            ),
-        )
-        .expect("Failed to register __react_append_child");
+    context.register_global_callable(
+        JsString::from("__react_append_child"),
+        2,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                append_child_fn(args, client, ctx)
+            },
+            react_client.clone(),
+        ),
+    )?;
 
     // __react_insert_before(parent_id: number, child_id: number, before_id: number) -> void
-    context
-        .register_global_callable(
-            JsString::from("__react_insert_before"),
-            3,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      args: &[JsValue],
-                      client: &ReactClient,
-                      ctx: &mut Context| { insert_before_fn(args, client, ctx) },
-                react_client.clone(),
-            ),
-        )
-        .expect("Failed to register __react_insert_before");
+    context.register_global_callable(
+        JsString::from("__react_insert_before"),
+        3,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                insert_before_fn(args, client, ctx)
+            },
+            react_client.clone(),
+        ),
+    )?;
 
     // __react_remove_child(parent_id: number, child_id: number) -> void
-    context
-        .register_global_callable(
-            JsString::from("__react_remove_child"),
-            2,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      args: &[JsValue],
-                      client: &ReactClient,
-                      ctx: &mut Context| { remove_child_fn(args, client, ctx) },
-                react_client.clone(),
-            ),
-        )
-        .expect("Failed to register __react_remove_child");
+    context.register_global_callable(
+        JsString::from("__react_remove_child"),
+        2,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                remove_child_fn(args, client, ctx)
+            },
+            react_client.clone(),
+        ),
+    )?;
 
     // __react_update_node(node_id: number, props_json: string) -> void
-    context
-        .register_global_callable(
-            JsString::from("__react_update_node"),
-            2,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      args: &[JsValue],
-                      client: &ReactClient,
-                      ctx: &mut Context| { update_node_fn(args, client, ctx) },
-                react_client.clone(),
-            ),
-        )
-        .expect("Failed to register __react_update_node");
+    context.register_global_callable(
+        JsString::from("__react_update_node"),
+        2,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                update_node_fn(args, client, ctx)
+            },
+            react_client.clone(),
+        ),
+    )?;
 
     // __react_update_text(node_id: number, content: string) -> void
-    context
-        .register_global_callable(
-            JsString::from("__react_update_text"),
-            2,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      args: &[JsValue],
-                      client: &ReactClient,
-                      ctx: &mut Context| { update_text_fn(args, client, ctx) },
-                react_client.clone(),
-            ),
-        )
-        .expect("Failed to register __react_update_text");
+    context.register_global_callable(
+        JsString::from("__react_update_text"),
+        2,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                update_text_fn(args, client, ctx)
+            },
+            react_client.clone(),
+        ),
+    )?;
 
     // __react_destroy_node(node_id: number) -> void
-    context
-        .register_global_callable(
-            JsString::from("__react_destroy_node"),
-            1,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      args: &[JsValue],
-                      client: &ReactClient,
-                      ctx: &mut Context| { destroy_node_fn(args, client, ctx) },
-                react_client.clone(),
-            ),
-        )
-        .expect("Failed to register __react_destroy_node");
+    context.register_global_callable(
+        JsString::from("__react_destroy_node"),
+        1,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                destroy_node_fn(args, client, ctx)
+            },
+            react_client.clone(),
+        ),
+    )?;
 
     // __react_clear_container() -> void
-    context
-        .register_global_callable(
-            JsString::from("__react_clear_container"),
-            0,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      args: &[JsValue],
-                      client: &ReactClient,
-                      ctx: &mut Context| { clear_container_fn(args, client, ctx) },
-                react_client.clone(),
-            ),
-        )
-        .expect("Failed to register __react_clear_container");
+    context.register_global_callable(
+        JsString::from("__react_clear_container"),
+        0,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                clear_container_fn(args, client, ctx)
+            },
+            react_client.clone(),
+        ),
+    )?;
 
     // __react_register_event_dispatcher(callback) -> void
     // Stores the JS callback on the global object for structured host→JS events.
-    context
-        .register_global_callable(
-            JsString::from("__react_register_event_dispatcher"),
-            1,
-            NativeFunction::from_copy_closure(
-                move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                    register_event_dispatcher_fn(args, ctx)
-                },
-            ),
-        )
-        .expect("Failed to register __react_register_event_dispatcher");
+    context.register_global_callable(
+        JsString::from("__react_register_event_dispatcher"),
+        1,
+        NativeFunction::from_copy_closure(
+            move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
+                register_event_dispatcher_fn(args, ctx)
+            },
+        ),
+    )?;
 
     // __react_flush_events() -> void
     // Drains the native event queue and invokes the registered dispatcher.
-    context
-        .register_global_callable(
-            JsString::from("__react_flush_events"),
-            0,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      _args: &[JsValue],
-                      queue: &ReactEventQueue,
-                      ctx: &mut Context| { flush_events_fn(queue, ctx) },
-                event_queue,
-            ),
-        )
-        .expect("Failed to register __react_flush_events");
+    context.register_global_callable(
+        JsString::from("__react_flush_events"),
+        0,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue,
+                  _args: &[JsValue],
+                  queue: &ReactEventQueue,
+                  ctx: &mut Context| { flush_events_fn(queue, ctx) },
+            event_queue.clone(),
+        ),
+    )?;
 
     // __react_request_reload() -> void
     // Vite HMR bridge: mark React roots dirty so Bevy re-executes the entry module.
-    context
-        .register_global_callable(
-            JsString::from("__react_request_reload"),
-            0,
-            NativeFunction::from_copy_closure_with_captures(
-                move |_this: &JsValue,
-                      _args: &[JsValue],
-                      flag: &ReactReloadFlag,
-                      _ctx: &mut Context| {
-                    flag.request();
-                    Ok(JsValue::undefined())
-                },
-                reload_flag,
-            ),
-        )
-        .expect("Failed to register __react_request_reload");
+    context.register_global_callable(
+        JsString::from("__react_request_reload"),
+        0,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue,
+                  _args: &[JsValue],
+                  flag: &ReactReloadFlag,
+                  _ctx: &mut Context| {
+                flag.request();
+                Ok(JsValue::undefined())
+            },
+            reload_flag,
+        ),
+    )?;
+
+    // __react_request_focus(nodeId, rootId?) -> void
+    context.register_global_callable(
+        JsString::from("__react_request_focus"),
+        2,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue,
+                  args: &[JsValue],
+                  queue: &ReactEventQueue,
+                  _ctx: &mut Context| { request_focus_fn(args, queue) },
+            event_queue.clone(),
+        ),
+    )?;
+
+    // __react_request_blur() -> void
+    context.register_global_callable(
+        JsString::from("__react_request_blur"),
+        0,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue,
+                  _args: &[JsValue],
+                  queue: &ReactEventQueue,
+                  _ctx: &mut Context| {
+                queue.request_blur();
+                Ok(JsValue::undefined())
+            },
+            event_queue,
+        ),
+    )?;
 
     log::debug!("Registered React native functions");
+    Ok(())
+}
+
+/// __react_request_focus(nodeId, rootId?)
+fn request_focus_fn(args: &[JsValue], queue: &ReactEventQueue) -> JsResult<JsValue> {
+    let node_id = args
+        .first()
+        .and_then(|v| v.as_number())
+        .map(|n| n as u64)
+        .ok_or_else(|| {
+            JsError::from_opaque(JsValue::from(JsString::from(
+                "__react_request_focus expects a node id number",
+            )))
+        })?;
+
+    let root_id = args
+        .get(1)
+        .and_then(|v| v.as_string())
+        .map(|s| s.to_std_string_escaped());
+
+    queue.request_focus(node_id, root_id);
+    Ok(JsValue::undefined())
 }
 
 /// __react_register_event_dispatcher(callback)

@@ -1,8 +1,12 @@
-//! Native React event queue (host → JS).
+//! Native React event queue (host → JS) and focus command bridge (JS → host).
 //!
 //! Bevy systems push structured events here; a fixed `__react_flush_events()` script
 //! drains the queue on the JS thread and invokes the registered dispatcher callback.
 //! No module-name string interpolation or async `import()` for event delivery.
+//!
+//! JS `__react_request_focus` / `__react_request_blur` enqueue [`ReactFocusCommand`]s
+//! that Bevy drains alongside [`RequestReactFocus`](crate::react::systems::RequestReactFocus)
+//! messages.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -24,10 +28,26 @@ pub struct ReactEvent {
     pub payload_json: String,
 }
 
+/// Programmatic focus/blur requested from JS native functions.
+#[derive(Clone, Debug)]
+pub enum ReactFocusCommand {
+    Focus {
+        node_id: u64,
+        root_id: Option<String>,
+    },
+    Blur,
+}
+
+#[derive(Default)]
+struct ReactEventQueueInner {
+    events: VecDeque<ReactEvent>,
+    focus_commands: VecDeque<ReactFocusCommand>,
+}
+
 /// Thread-safe queue shared between Bevy systems and Boa native functions.
 #[derive(Clone, Default, Finalize, Resource)]
 pub struct ReactEventQueue {
-    inner: Arc<Mutex<VecDeque<ReactEvent>>>,
+    inner: Arc<Mutex<ReactEventQueueInner>>,
 }
 
 unsafe impl Trace for ReactEventQueue {
@@ -41,7 +61,7 @@ impl ReactEventQueue {
 
     pub fn push(&self, event: ReactEvent) {
         if let Ok(mut q) = self.inner.lock() {
-            q.push_back(event);
+            q.events.push_back(event);
         }
     }
 
@@ -60,17 +80,39 @@ impl ReactEventQueue {
         });
     }
 
+    /// Enqueue a focus request from JS (`__react_request_focus`).
+    pub fn request_focus(&self, node_id: u64, root_id: Option<String>) {
+        if let Ok(mut q) = self.inner.lock() {
+            q.focus_commands
+                .push_back(ReactFocusCommand::Focus { node_id, root_id });
+        }
+    }
+
+    /// Enqueue a blur request from JS (`__react_request_blur`).
+    pub fn request_blur(&self) {
+        if let Ok(mut q) = self.inner.lock() {
+            q.focus_commands.push_back(ReactFocusCommand::Blur);
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.inner
             .lock()
-            .map(|q| q.is_empty())
+            .map(|q| q.events.is_empty())
             .unwrap_or(true)
     }
 
     pub fn drain(&self) -> Vec<ReactEvent> {
         self.inner
             .lock()
-            .map(|mut q| q.drain(..).collect())
+            .map(|mut q| q.events.drain(..).collect())
+            .unwrap_or_default()
+    }
+
+    pub fn drain_focus_commands(&self) -> Vec<ReactFocusCommand> {
+        self.inner
+            .lock()
+            .map(|mut q| q.focus_commands.drain(..).collect())
             .unwrap_or_default()
     }
 }

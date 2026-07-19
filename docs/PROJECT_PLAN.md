@@ -81,7 +81,7 @@ Host owns Slider/Checkbox interaction; Bevy Slider drag remains horizontal-only 
 - [x] In-game error overlay (Dismiss / Esc)
 - [x] Warnings for unsupported style props
 - [x] Source-mapped stacks when frames have `url:line:col` (Vite maps, `sourceMappingURL`, CallFrame positions)
-- [ ] Symbolicate bare VM frame names with no path (Boa platform limit)
+- [x] ~~Symbolicate bare VM frame names~~ — **wontfix** (Boa platform limit; no path to map)
 
 ### 6. Devtools over designer tools — *done* (MVP; not drop-in RDT)
 
@@ -91,7 +91,7 @@ Skip a visual designer. `:8098` is an RDT-shaped inspector bridge, not `npx reac
 - [x] RDT-shaped `{ event, payload }` messages (fiber operations snapshot)
 - [x] Optional bevy-egui inspector for node ↔ entity mapping (`egui` / `devtools-full` features)
 - [x] Component gallery example (`examples/gallery`)
-- [ ] Drop-in `react-devtools-core` / Chrome extension on `:8097` (blocked by Boa init order + Int32 ops codec)
+- [x] ~~Drop-in `react-devtools-core` on `:8097`~~ — **wontfix for now** (Boa init order + Int32 ops; revisit if runtime gains browser APIs)
 
 ### 7. Binary op protocol — *partial* (codec + opt-in reconciler; not default)
 

@@ -1,7 +1,8 @@
 //! HUD example: bind Bevy ECS game state into React via [`ReactBridge`].
 //!
-//! HP / score tick on the Rust side and are published on the `"hud"` channel.
-//! The UI reads them with `useBridgeState` and can call `add_score` via `callNative`.
+//! `PlayerStats` is registered as a resource store on the `"hud"` channel.
+//! The UI reads it with `useResource` / `useBridgeState` and can call
+//! `add_score` / `heal` via `callNative` (Promise-returning).
 
 use bevy::prelude::*;
 use bevy_react::{
@@ -25,24 +26,19 @@ fn main() {
             score: 0,
         })
         .add_systems(Startup, (setup_ui, setup_bridge))
-        .add_systems(Update, (tick_player, sync_hud))
+        .add_systems(Update, tick_player)
         .run();
 }
 
+/// ECS resource mirrored to React via `register_resource_store`.
+///
+/// Keep field names in sync with `examples/hud/ui/src/hudTypes.ts`
+/// (hand-written parallel types; see `docs/BRIDGE.md`).
 #[derive(Resource, Clone, Serialize)]
 struct PlayerStats {
     hp: i32,
     max_hp: i32,
     score: u32,
-}
-
-#[derive(Serialize)]
-struct HudPayload {
-    hp: i32,
-    max_hp: i32,
-    score: u32,
-    /// 0.0–1.0 fill fraction for the HP bar.
-    hp_ratio: f32,
 }
 
 fn setup_ui(mut commands: Commands) {
@@ -79,19 +75,27 @@ fn setup_ui(mut commands: Commands) {
 }
 
 fn setup_bridge(bridge: Res<ReactBridge>) {
+    bridge.register_resource_store::<PlayerStats>("hud");
+
     bridge.register("add_score", |world, args| {
         let points = args.as_i64().unwrap_or(10) as u32;
-        if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
+        let score = if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
             stats.score = stats.score.saturating_add(points);
-        }
-        serde_json::Value::Null
+            stats.score
+        } else {
+            0
+        };
+        serde_json::json!({ "score": score })
     });
 
     bridge.register("heal", |world, _args| {
-        if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
+        let hp = if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
             stats.hp = (stats.hp + 15).min(stats.max_hp);
-        }
-        serde_json::Value::Null
+            stats.hp
+        } else {
+            0
+        };
+        serde_json::json!({ "hp": hp })
     });
 }
 
@@ -101,24 +105,4 @@ fn tick_player(time: Res<Time>, mut stats: ResMut<PlayerStats>) {
     if drain > 0 {
         stats.hp = (stats.hp - drain).max(0);
     }
-}
-
-fn sync_hud(bridge: Res<ReactBridge>, stats: Res<PlayerStats>) {
-    if !stats.is_changed() && !stats.is_added() {
-        return;
-    }
-    let hp_ratio = if stats.max_hp > 0 {
-        stats.hp as f32 / stats.max_hp as f32
-    } else {
-        0.0
-    };
-    bridge.publish(
-        "hud",
-        HudPayload {
-            hp: stats.hp,
-            max_hp: stats.max_hp,
-            score: stats.score,
-            hp_ratio,
-        },
-    );
 }

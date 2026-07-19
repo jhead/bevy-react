@@ -12,7 +12,6 @@
 //!     App::new()
 //!         .add_plugins(DefaultPlugins)
 //!         .add_plugins(ReactPlugin)
-//!         .add_systems(Startup, setup)
 //!         .run();
 //! }
 //!
@@ -54,7 +53,8 @@ mod message_tests;
 pub use plugin::{ReactDefaultFontPlugin, ReactPlugin};
 pub use asset_source::{ReactAssetBundle, ReactAssetSource, ReactJsModule};
 pub use bridge::{
-    BridgeCall, ReactBridge, flush_react_bridge, process_react_bridge_calls,
+    BridgeCall, BridgeCallResult, ReactBridge, flush_react_bridge,
+    process_react_bridge_calls, sync_registered_resource_stores,
 };
 pub use client::*;
 pub use embedded::EmbeddedBundleSource;

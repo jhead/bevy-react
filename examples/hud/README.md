@@ -4,9 +4,10 @@
 
 Binds Bevy ECS player stats into React via [`ReactBridge`](../../docs/BRIDGE.md):
 
-- Rust publishes `{ hp, max_hp, score, hp_ratio }` on the `"hud"` channel each change
-- React reads with `useBridgeState('hud', …)` and draws an HP bar + score
-- Buttons call `add_score` / `heal` through `callNative`
+- Rust registers `PlayerStats` with `register_resource_store("hud")`
+- React reads with `useResource('hud', …)` (HP ratio derived on the TS side)
+- Buttons call `add_score` / `heal` through Promise-returning `callNative`
+- Shared JSON shape: `ui/src/hudTypes.ts` ↔ Rust `PlayerStats`
 
 ## How to run
 

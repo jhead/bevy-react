@@ -4,19 +4,15 @@ import {
   Text,
   Button,
   ProgressBar,
-  useBridgeState,
+  useResource,
   callNative,
   useInteraction,
 } from 'bevy-react'
-
-type Hud = {
-  hp: number
-  max_hp: number
-  score: number
-  hp_ratio: number
-}
-
-const INITIAL: Hud = { hp: 100, max_hp: 100, score: 0, hp_ratio: 1 }
+import {
+  INITIAL_PLAYER_STATS,
+  hpRatio,
+  type PlayerStats,
+} from './hudTypes'
 
 function ActionButton({
   label,
@@ -52,7 +48,8 @@ function ActionButton({
 }
 
 function App(): ReactNode {
-  const hud = useBridgeState<Hud>('hud', INITIAL)
+  const hud = useResource<PlayerStats>('hud', INITIAL_PLAYER_STATS)
+  const ratio = hpRatio(hud)
 
   return (
     <Node
@@ -86,7 +83,7 @@ function App(): ReactNode {
             {`HP ${hud.hp} / ${hud.max_hp}`}
           </Text>
           <ProgressBar
-            progress={hud.hp_ratio}
+            progress={ratio}
             style={{ width: '100%', height: 18 }}
             trackStyle={{
               backgroundColor: '#1a222c',
@@ -95,7 +92,7 @@ function App(): ReactNode {
               borderColor: '#334455',
             }}
             fillStyle={{
-              backgroundColor: hud.hp_ratio > 0.3 ? '#3ecf7a' : '#e94560',
+              backgroundColor: ratio > 0.3 ? '#3ecf7a' : '#e94560',
               borderRadius: 3,
             }}
           />
@@ -115,11 +112,18 @@ function App(): ReactNode {
       <Node style={{ flexDirection: 'row', alignItems: 'center' }}>
         <ActionButton
           label="+10 Score"
-          onClick={() => callNative('add_score', 10)}
+          onClick={() => {
+            void callNative('add_score', 10)
+          }}
         />
-        <ActionButton label="Heal" onClick={() => callNative('heal')} />
+        <ActionButton
+          label="Heal"
+          onClick={() => {
+            void callNative('heal')
+          }}
+        />
         <Text style={{ fontSize: 12, color: '#8899aa', marginLeft: 8 }}>
-          ECS → ReactBridge → useBridgeState
+          ECS store → useResource
         </Text>
       </Node>
     </Node>

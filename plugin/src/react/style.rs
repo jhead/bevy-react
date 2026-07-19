@@ -521,6 +521,10 @@ pub fn parse_text_align(value: &str) -> Option<Justify> {
     }
 }
 
+pub fn style_text_align(props: &StyleProps) -> Option<Justify> {
+    props.text_align.as_deref().and_then(parse_text_align)
+}
+
 /// Parse line-height: unitless → RelativeToFont, px/% → Px / RelativeToFont.
 pub fn parse_line_height(value: &str) -> Option<LineHeight> {
     let value = value.trim();
@@ -540,6 +544,10 @@ pub fn parse_line_height(value: &str) -> Option<LineHeight> {
         .map(LineHeight::RelativeToFont)
 }
 
+pub fn style_line_height(props: &StyleProps) -> Option<LineHeight> {
+    props.line_height.as_ref().and_then(|v| parse_line_height(&v.0))
+}
+
 /// Asset path for fontFamily when it looks like a path; `None` for generic families.
 pub fn parse_font_family(value: &str) -> Option<String> {
     let value = value.trim().trim_matches('"').trim_matches('\'');
@@ -553,6 +561,10 @@ pub fn parse_font_family(value: &str) -> Option<String> {
         _ if value.contains('/') || value.contains('.') => Some(value.to_string()),
         _ => Some(value.to_string()),
     }
+}
+
+pub fn style_font_family(props: &StyleProps) -> Option<String> {
+    props.font_family.as_deref().and_then(parse_font_family)
 }
 
 /// Map CSS object-fit to Bevy NodeImageMode.
@@ -1779,35 +1791,61 @@ mod tests {
 
     #[test]
     fn test_box_shadow_and_gradient() {
-        let shadow = parse_box_shadow("2px 4px 8px 0px rgba(0, 0, 0, 0.5)").unwrap();
+        let props: StyleProps = serde_json::from_str(
+            r#"{
+                "boxShadow": "2px 4px 8px 0px rgba(0, 0, 0, 0.5)",
+                "backgroundGradient": "linear-gradient(to right, red, blue)"
+            }"#,
+        )
+        .unwrap();
+        let shadow = style_to_box_shadow(&props).unwrap();
         assert_eq!(shadow.0.len(), 1);
         assert_eq!(shadow.0[0].x_offset, Val::Px(2.0));
         assert_eq!(shadow.0[0].y_offset, Val::Px(4.0));
         assert_eq!(shadow.0[0].blur_radius, Val::Px(8.0));
 
-        let grad = parse_background_gradient("linear-gradient(to right, red, blue)").unwrap();
+        let grad = style_to_background_gradient(&props).unwrap();
         assert_eq!(grad.0.len(), 1);
+
+        let via_image: StyleProps = serde_json::from_str(
+            r#"{"backgroundImage": "linear-gradient(90deg, red, blue)"}"#,
+        )
+        .unwrap();
+        assert!(style_to_background_gradient(&via_image).is_some());
     }
 
     #[test]
     fn test_text_and_image_helpers() {
-        assert_eq!(parse_text_align("center"), Some(Justify::Center));
+        let props: StyleProps = serde_json::from_str(
+            r##"{
+                "tint": "#ff0000",
+                "tintColor": "blue",
+                "opacity": 0.5,
+                "textAlign": "center",
+                "lineHeight": 1.5,
+                "fontFamily": "fonts/FiraSans.ttf",
+                "objectFit": "fill"
+            }"##,
+        )
+        .unwrap();
+
+        assert_eq!(style_text_align(&props), Some(Justify::Center));
         assert_eq!(
-            parse_line_height("1.5"),
+            style_line_height(&props),
             Some(LineHeight::RelativeToFont(1.5))
         );
         assert_eq!(parse_line_height("24px"), Some(LineHeight::Px(24.0)));
         assert_eq!(
-            parse_font_family("fonts/FiraSans.ttf").as_deref(),
+            style_font_family(&props).as_deref(),
             Some("fonts/FiraSans.ttf")
         );
         assert!(parse_font_family("sans-serif").is_none());
-        assert_eq!(parse_object_fit("fill"), NodeImageMode::Stretch);
+        assert_eq!(style_object_fit(&props), Some(NodeImageMode::Stretch));
         assert_eq!(parse_object_fit("contain"), NodeImageMode::Auto);
-
-        let props: StyleProps =
-            serde_json::from_str(r##"{"tint": "#ff0000", "opacity": 0.5}"##).unwrap();
         assert!(style_tint(&props).is_some());
+        let tint_only: StyleProps =
+            serde_json::from_str(r#"{"tintColor": "lime"}"#).unwrap();
+        assert!(style_tint(&tint_only).is_some());
         assert!((style_opacity(&props).unwrap() - 0.5).abs() < 0.001);
     }
 }

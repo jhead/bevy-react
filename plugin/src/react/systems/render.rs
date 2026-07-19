@@ -1,7 +1,12 @@
 use bevy::prelude::*;
+use bevy::text::TextLayout;
 
 use crate::react::client::ReactClientProto;
-use crate::react::style::{json_to_style, parse_color, parse_props, parse_val};
+use crate::react::style::{
+    json_to_style, parse_color, parse_font_family, parse_line_height, parse_props, parse_text_align,
+    parse_val, style_object_fit, style_opacity, style_tint, style_to_background_gradient,
+    style_to_border_color, style_to_border_radius, style_to_box_shadow, StyleProps,
+};
 use crate::react::systems::types::*;
 
 /// Process incoming React messages and apply them to the ECS
@@ -216,7 +221,19 @@ fn handle_create_node(
 
             if let Some(image_path) = props.src.clone().or(props.image.clone()) {
                 let image_handle: Handle<Image> = asset_server.load(image_path);
-                cmd.insert(ImageNode::new(image_handle));
+                let mut image_node = ImageNode::new(image_handle);
+                if let Some(ref style_props) = props.style {
+                    if let Some(mode) = style_object_fit(style_props) {
+                        image_node.image_mode = mode;
+                    }
+                    if let Some(tint) = style_tint(style_props) {
+                        image_node.color = tint;
+                    }
+                    if let Some(opacity) = style_opacity(style_props) {
+                        image_node.color.set_alpha(opacity);
+                    }
+                }
+                cmd.insert(image_node);
             }
             cmd
         }
@@ -232,19 +249,7 @@ fn handle_create_node(
 
             // Apply text styling
             if let Some(ref style_props) = props.style {
-                // Apply text color via TextColor component
-                if let Some(ref color_str) = style_props.color
-                    && let Some(color) = parse_color(color_str)
-                {
-                    cmd.insert(TextColor(color));
-                }
-                // Apply font size via TextFont component
-                if let Some(ref font_size) = style_props.font_size {
-                    let size = parse_val(&font_size.0);
-                    if let Val::Px(px) = size {
-                        cmd.insert(TextFont::from_font_size(px));
-                    }
-                }
+                apply_text_style(&mut cmd, style_props, asset_server);
             }
 
             cmd
@@ -273,25 +278,7 @@ fn handle_create_node(
     if node_type != "bevy-text"
         && let Some(ref style_props) = props.style
     {
-        if let Some(ref bg) = style_props.background_color
-            && let Some(color) = parse_color(bg)
-        {
-            entity_commands.insert(BackgroundColor(color));
-        }
-        if let Some(ref bc) = style_props.border_color
-            && let Some(color) = parse_color(bc)
-        {
-            entity_commands.insert(BorderColor::all(color));
-        }
-        if let Some(ref br) = style_props.border_radius {
-            let val = parse_val(&br.0);
-            entity_commands.insert(BorderRadius::all(val));
-        }
-        if let Some(ref d) = style_props.display
-            && d.to_lowercase() == "none"
-        {
-            entity_commands.insert(Visibility::Hidden);
-        }
+        apply_visual_style(&mut entity_commands, style_props);
     }
 
     // Apply ZIndex if specified
@@ -403,34 +390,18 @@ fn handle_update_node(
     let props = parse_props(props_json);
 
     if is_text {
-        // Text nodes: only Text / TextColor / TextFont — never layout Node or BackgroundColor
+        // Text nodes: only Text / TextColor / TextFont / layout — never BackgroundColor
         if let Some(ref content) = props.content {
             commands.entity(entity).insert(Text::new(content.clone()));
         }
         match props.style.as_ref() {
             Some(style_props) => {
-                match style_props.color.as_deref().and_then(parse_color) {
-                    Some(color) => {
-                        commands.entity(entity).insert(TextColor(color));
-                    }
-                    None => {
-                        commands.entity(entity).remove::<TextColor>();
-                    }
-                }
-                match style_props.font_size.as_ref() {
-                    Some(font_size) => {
-                        if let Val::Px(px) = parse_val(&font_size.0) {
-                            commands.entity(entity).insert(TextFont::from_font_size(px));
-                        }
-                    }
-                    None => {
-                        commands.entity(entity).remove::<TextFont>();
-                    }
-                }
+                apply_text_style_commands(commands, entity, style_props, asset_server);
             }
             None => {
                 commands.entity(entity).remove::<TextColor>();
                 commands.entity(entity).remove::<TextFont>();
+                commands.entity(entity).remove::<TextLayout>();
             }
         }
         log::debug!("Updated text node: id={}", node_id);
@@ -441,37 +412,7 @@ fn handle_update_node(
         Some(style_props) => {
             let style = json_to_style(style_props);
             commands.entity(entity).insert(style);
-
-            // BackgroundColor — insert or remove when cleared
-            match style_props.background_color.as_deref().and_then(parse_color) {
-                Some(color) => {
-                    commands.entity(entity).insert(BackgroundColor(color));
-                }
-                None => {
-                    commands.entity(entity).remove::<BackgroundColor>();
-                }
-            }
-
-            // BorderColor
-            match style_props.border_color.as_deref().and_then(parse_color) {
-                Some(color) => {
-                    commands.entity(entity).insert(BorderColor::all(color));
-                }
-                None => {
-                    commands.entity(entity).remove::<BorderColor>();
-                }
-            }
-
-            // BorderRadius
-            match style_props.border_radius.as_ref() {
-                Some(br) => {
-                    let val = parse_val(&br.0);
-                    commands.entity(entity).insert(BorderRadius::all(val));
-                }
-                None => {
-                    commands.entity(entity).remove::<BorderRadius>();
-                }
-            }
+            apply_visual_style_commands(commands, entity, style_props);
 
             // ZIndex
             match style_props.z_index {
@@ -482,16 +423,6 @@ fn handle_update_node(
                     commands.entity(entity).remove::<ZIndex>();
                 }
             }
-
-            // Visibility from display:none — remove override when cleared / not none
-            match style_props.display.as_deref() {
-                Some(d) if d.eq_ignore_ascii_case("none") => {
-                    commands.entity(entity).insert(Visibility::Hidden);
-                }
-                _ => {
-                    commands.entity(entity).remove::<Visibility>();
-                }
-            }
         }
         None => {
             // Entire style prop cleared — drop optional visual overrides and reset layout
@@ -499,6 +430,8 @@ fn handle_update_node(
             commands.entity(entity).remove::<BackgroundColor>();
             commands.entity(entity).remove::<BorderColor>();
             commands.entity(entity).remove::<BorderRadius>();
+            commands.entity(entity).remove::<BoxShadow>();
+            commands.entity(entity).remove::<BackgroundGradient>();
             commands.entity(entity).remove::<ZIndex>();
             commands.entity(entity).remove::<Visibility>();
         }
@@ -507,7 +440,19 @@ fn handle_update_node(
     // Update image if provided
     if let Some(image_path) = props.src.clone().or(props.image.clone()) {
         let image_handle: Handle<Image> = asset_server.load(image_path);
-        commands.entity(entity).insert(ImageNode::new(image_handle));
+        let mut image_node = ImageNode::new(image_handle);
+        if let Some(ref style_props) = props.style {
+            if let Some(mode) = style_object_fit(style_props) {
+                image_node.image_mode = mode;
+            }
+            if let Some(tint) = style_tint(style_props) {
+                image_node.color = tint;
+            }
+            if let Some(opacity) = style_opacity(style_props) {
+                image_node.color.set_alpha(opacity);
+            }
+        }
+        commands.entity(entity).insert(image_node);
     }
 
     log::debug!("Updated node: id={}", node_id);

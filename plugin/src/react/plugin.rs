@@ -6,7 +6,11 @@ use bevy::prelude::*;
 
 use crate::js_bevy::{JsClientResource, JsEngineExtensionComponent};
 use crate::react::ReactClient;
+use crate::react::asset_source::{
+    ReactJsModule, ReactJsModuleLoader, reload_modified_react_assets, resolve_react_assets,
+};
 use crate::react::event_queue::ReactEventQueue;
+use crate::react::hmr::{ReactReloadFlag, apply_react_hmr_reloads};
 use crate::react::native_functions::ReactJsExtension;
 use crate::react::systems::*;
 
@@ -16,19 +20,44 @@ impl Plugin for ReactPlugin {
     fn build(&self, app: &mut App) {
         log::info!("Building React plugin...");
 
-        app.init_resource::<ReactRootMap>()
+        app.init_asset::<ReactJsModule>()
+            .init_asset_loader::<ReactJsModuleLoader>()
+            .init_resource::<ReactRootMap>()
             .init_resource::<FocusedNode>()
             .init_resource::<ReactEventQueue>()
+            .init_resource::<ReactReloadFlag>()
+            .add_message::<RequestReactFocus>()
+            .add_message::<RequestReactBlur>()
+            .add_observer(on_react_root_removed)
             .add_systems(Startup, register_react_extension)
-            .add_systems(Update, execute_react_scripts)
             .add_systems(
                 Update,
                 (
-                    process_react_messages,
-                    handle_input_interactions,
-                    handle_keyboard_input,
-                    flush_react_events,
-                    inspect,
+                    resolve_react_assets,
+                    reload_modified_react_assets,
+                    apply_react_hmr_reloads,
+                    execute_react_scripts,
+                )
+                    .chain(),
+            )
+            // Nested chains: large flat tuples hit Curve::chain ambiguity in Bevy 0.17.
+            .add_systems(
+                Update,
+                (
+                    (
+                        process_react_messages,
+                        handle_input_interactions,
+                        handle_click_outside_blur,
+                        handle_wheel_scroll,
+                    )
+                        .chain(),
+                    (
+                        apply_focus_requests,
+                        handle_keyboard_input,
+                        flush_react_events,
+                        inspect,
+                    )
+                        .chain(),
                 )
                     .chain(),
             );
@@ -38,10 +67,14 @@ impl Plugin for ReactPlugin {
 }
 
 /// System to register the React extension with the JS engine
-fn register_react_extension(mut commands: Commands, event_queue: Res<ReactEventQueue>) {
+fn register_react_extension(
+    mut commands: Commands,
+    event_queue: Res<ReactEventQueue>,
+    reload_flag: Res<ReactReloadFlag>,
+) {
     let (client, receiver) = ReactClient::new();
 
-    let react_ext = ReactJsExtension::new(client, event_queue.clone());
+    let react_ext = ReactJsExtension::new(client, event_queue.clone(), reload_flag.clone());
     commands.spawn(JsEngineExtensionComponent::new(react_ext));
     commands.insert_resource(ReactMessageReceiver(receiver));
 }
@@ -89,7 +122,7 @@ fn execute_react_scripts(
 
         log::info!(
             "Executed script: {}",
-            script.source_string[..100.min(script.source_string.len())].to_string()
+            &script.source_string[..100.min(script.source_string.len())]
         );
     }
 }

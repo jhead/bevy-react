@@ -86,13 +86,35 @@ fn setup(mut commands: Commands) {
 }
 ```
 
-`ViteDevSource` defaults to `http://localhost:5173`. Override with `.with_dev_server_url(...)` / `.with_module_name(...)` if needed.
+`ViteDevSource` defaults to `http://localhost:5173`. Override with `.with_dev_server_url(...)` / `.with_module_name(...)` if needed. Prefer `.into_bundle(node)` so Vite HMR re-sets `ReactDirtyFlag`.
 
-For a prebuilt bundle on disk (no HMR):
+### Production (release) loading
+
+See **[BUILD.md](BUILD.md)** for the Vite single-ESM template. Typical host options:
 
 ```rust
-let js_source = ReactScriptSource::from_path("path/to/bundle.mjs")?;
+use bevy_react::{
+    EmbeddedBundleSource, ReactAssetBundle, ReactScriptSource, ViteDevSource,
+};
+
+// Debug → Vite; release → embedded bundle (both args must be cheap to build)
+let source = ReactScriptSource::auto(
+    ViteDevSource::default().with_entry_point("src/main.tsx"),
+    EmbeddedBundleSource::new("my-app", include_str!("../assets/ui/app.js")),
+);
+
+// Or AssetServer (WASM / packed assets):
+commands.spawn(ReactAssetBundle::new(
+    Node::default(),
+    &asset_server,
+    "ui/app.js",
+    "my-app",
+));
 ```
+
+For fallible paths (e.g. `from_path`), use `ReactScriptSource::auto_with(|| ..., || ...)`.
+
+`NODE_ENV` is `development` under `debug_assertions` (and forced by the Vite bootstrap); release shims use `production`.
 
 ### 3. Create the React entry
 
@@ -153,5 +175,6 @@ Style reference: [STYLE_PROPS.md](STYLE_PROPS.md).
 ## Next steps
 
 - [Architecture](ARCHITECTURE.md) — how RPC and systems fit together
+- [BUILD.md](BUILD.md) — production single-ESM Vite template + loading APIs
 - [PROJECT_PLAN.md](PROJECT_PLAN.md) — known gaps and roadmap
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — local workflow for contributors

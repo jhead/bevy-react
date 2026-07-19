@@ -8,7 +8,8 @@ use serde_json::Value;
 use crate::{
     js::{JsEngineClient, JsEngineExtension},
     react::{
-        event_queue::ReactEventQueue, ReactClient, shim::register_environment_shims,
+        event_queue::ReactEventQueue, hmr::ReactReloadFlag, ReactClient,
+        shim::register_environment_shims,
     },
 };
 
@@ -17,13 +18,19 @@ use crate::{
 pub struct ReactJsExtension {
     client: ReactClient,
     event_queue: ReactEventQueue,
+    reload_flag: ReactReloadFlag,
 }
 
 impl ReactJsExtension {
-    pub fn new(client: ReactClient, event_queue: ReactEventQueue) -> Self {
+    pub fn new(
+        client: ReactClient,
+        event_queue: ReactEventQueue,
+        reload_flag: ReactReloadFlag,
+    ) -> Self {
         Self {
             client,
             event_queue,
+            reload_flag,
         }
     }
 }
@@ -32,7 +39,12 @@ impl JsEngineExtension for ReactJsExtension {
     fn register(&self, context: &mut Context, _client: JsEngineClient) -> Result<(), JsError> {
         log::info!("Registering React native functions");
         register_environment_shims(context);
-        register_react_functions(context, self.client.clone(), self.event_queue.clone());
+        register_react_functions(
+            context,
+            self.client.clone(),
+            self.event_queue.clone(),
+            self.reload_flag.clone(),
+        );
         Ok(())
     }
 }
@@ -42,6 +54,7 @@ fn register_react_functions(
     context: &mut Context,
     react_client: ReactClient,
     event_queue: ReactEventQueue,
+    reload_flag: ReactReloadFlag,
 ) {
     // __react_create_node(type: string, props_json: string) -> number
     context
@@ -207,6 +220,25 @@ fn register_react_functions(
             ),
         )
         .expect("Failed to register __react_flush_events");
+
+    // __react_request_reload() -> void
+    // Vite HMR bridge: mark React roots dirty so Bevy re-executes the entry module.
+    context
+        .register_global_callable(
+            JsString::from("__react_request_reload"),
+            0,
+            NativeFunction::from_copy_closure_with_captures(
+                move |_this: &JsValue,
+                      _args: &[JsValue],
+                      flag: &ReactReloadFlag,
+                      _ctx: &mut Context| {
+                    flag.request();
+                    Ok(JsValue::undefined())
+                },
+                reload_flag,
+            ),
+        )
+        .expect("Failed to register __react_request_reload");
 
     log::debug!("Registered React native functions");
 }

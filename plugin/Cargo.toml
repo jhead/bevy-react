@@ -21,11 +21,16 @@ serde = "1.0.228"
 serde_json = "1.0.145"
 url = "2.5.7"
 
+# Used by the app-level `fetch` Fetcher (JsResponse builder).
+http = { version = "1", optional = true }
+
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.48", features = ["full"] }
 tokio-tungstenite = { version = "0.28.0", optional = true }
-reqwest = { version = "0.12.24", optional = true }
+# blocking: Boa's native job executor uses futures_lite::block_on, which cannot
+# drive Tokio futures — use reqwest's blocking client for globalThis.fetch.
+reqwest = { version = "0.12.24", optional = true, features = ["blocking"] }
 
 # WASM dependencies - reqwest uses browser fetch API automatically
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -36,4 +41,4 @@ js-sys = "0.3"
 [features]
 default = ["websocket", "fetch"]
 websocket = ["tokio-tungstenite"]
-fetch = ["reqwest"]
+fetch = ["reqwest", "http"]

@@ -26,3 +26,12 @@ cargo run
 You should see the React UI loaded and rendered on the right side of the Bevy window.
 
 At this point, you can edit the `ui` React/Typescript code, save, and it should automatically hot reload in Bevy!
+
+## Production bundle
+
+```bash
+cd ui && pnpm build   # writes dist/app.js
+cargo run --release   # loads dist/app.js via ReactScriptSource::auto_with
+```
+
+See [docs/BUILD.md](../../docs/BUILD.md) for the Vite single-ESM template and AssetServer / `include_str!` options.

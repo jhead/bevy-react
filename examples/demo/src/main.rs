@@ -1,5 +1,8 @@
 use bevy::prelude::*;
-use bevy_react::{ReactBundle, ReactPlugin, ViteDevSource, js_bevy::JsPlugin};
+use bevy_react::{
+    ReactBundle, ReactHmrRoot, ReactPlugin, ReactScriptSource, ViteDevSource,
+    js_bevy::JsPlugin,
+};
 
 fn main() {
     App::new()
@@ -13,21 +16,39 @@ fn main() {
 fn setup(mut commands: Commands) {
     commands.spawn(Camera2d);
 
-    // Use Vite dev server to load the React app with hot reloading support
-    let js_source = ViteDevSource::default()
-        .with_module_name("bevy-react-demo-vite")
-        .with_entry_point("src/main.tsx");
-
-    // Spawn the React UI bundle covering the right half of the screen
-    commands.spawn(ReactBundle::new(
-        Node {
-            width: Val::Percent(50.0),
-            height: Val::Percent(100.0),
-            left: Val::Percent(50.0),
-            top: Val::Percent(0.0),
-            position_type: PositionType::Absolute,
-            ..default()
+    // Debug: Vite HMR. Release: single ESM from `pnpm build` in examples/demo/ui
+    // (see docs/BUILD.md). Prefer EmbeddedBundleSource / ReactAssetBundle in apps.
+    let js_source = ReactScriptSource::auto_with(
+        || {
+            ViteDevSource::default()
+                .with_module_name("bevy-react-demo-vite")
+                .with_entry_point("src/main.tsx")
+                .into()
         },
-        js_source.into(),
+        || {
+            ReactScriptSource::from_path(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/ui/dist/app.js"
+            ))
+            .expect(
+                "Release builds need examples/demo/ui/dist/app.js — run `pnpm build` there (docs/BUILD.md)",
+            )
+        },
+    );
+
+    commands.spawn((
+        ReactBundle::new(
+            Node {
+                width: Val::Percent(50.0),
+                height: Val::Percent(100.0),
+                left: Val::Percent(50.0),
+                top: Val::Percent(0.0),
+                position_type: PositionType::Absolute,
+                ..default()
+            },
+            js_source,
+        ),
+        // Enables Vite WebSocket → ReactDirtyFlag reloads in debug.
+        ReactHmrRoot,
     ));
 }

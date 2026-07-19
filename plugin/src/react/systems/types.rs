@@ -23,6 +23,12 @@ pub struct ReactRoot {
     pub id: String,
 }
 
+impl Default for ReactRoot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ReactRoot {
     pub fn new() -> Self {
         Self {
@@ -40,6 +46,7 @@ pub struct ReactBundle {
 }
 
 impl ReactBundle {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(root_node: Node, source: ReactScriptSource) -> impl Bundle {
         (
             Self {
@@ -67,72 +74,68 @@ impl ReactScriptSource {
         }
     }
 
-    pub fn from_path(path: impl Into<String>) -> Result<Self, io::Error> {
-        let abs_path = Path::new(&path.into()).canonicalize()?;
-        let module_name = abs_path.to_string_lossy();
+    /// Embed a prebuilt bundle with `include_str!` (or any `&'static str`).
+    ///
+    /// Prefer [`crate::EmbeddedBundleSource`] when you want a named builder type.
+    pub fn from_embedded(module_name: impl Into<String>, source: &'static str) -> Self {
+        Self::from_string(module_name, source)
+    }
+
+    pub fn from_path(path: impl AsRef<Path>) -> Result<Self, io::Error> {
+        let abs_path = path.as_ref().canonicalize()?;
+        let module_name = abs_path.to_string_lossy().into_owned();
 
         match fs::read_to_string(&abs_path) {
             Ok(content) => Ok(Self::from_string(module_name, content)),
             Err(e) => {
                 log::error!("Failed to load js bundle from {}: {}", abs_path.display(), e);
-                return Err(e);
+                Err(e)
             }
+        }
+    }
+
+    /// Pick Vite (debug) vs production source based on `debug_assertions`.
+    ///
+    /// Both arguments are evaluated. For fallible release loading (e.g. [`Self::from_path`]),
+    /// use [`Self::auto_with`] so the release path is not constructed in debug builds.
+    ///
+    /// # Example
+    /// ```ignore
+    /// ReactScriptSource::auto(
+    ///     ViteDevSource::default().with_entry_point("src/main.tsx"),
+    ///     EmbeddedBundleSource::new("app", include_str!("../assets/ui/app.js")),
+    /// )
+    /// ```
+    pub fn auto(dev: impl Into<Self>, release: impl Into<Self>) -> Self {
+        if cfg!(debug_assertions) {
+            let _ = release;
+            dev.into()
+        } else {
+            let _ = dev;
+            release.into()
+        }
+    }
+
+    /// Like [`Self::auto`], but lazily constructs only the selected source.
+    pub fn auto_with(dev: impl FnOnce() -> Self, release: impl FnOnce() -> Self) -> Self {
+        if cfg!(debug_assertions) {
+            dev()
+        } else {
+            release()
         }
     }
 
     /// Create a script source for loading from a Vite dev server with HMR support.
     ///
-    /// This generates a bootstrap script that:
-    /// 1. Loads the Vite HMR client (`/@vite/client`)
-    /// 2. Loads the specified entry point
-    ///
-    /// # Arguments
-    /// * `entry_point` - The path to the entry point relative to Vite root (e.g., "/src/index.tsx")
-    /// * `vite_url` - The Vite dev server URL (default: "http://localhost:5173")
-    ///
-    /// # Example
-    /// ```ignore
-    /// let source = ReactScriptSource::from_vite("/src/index.tsx", None);
-    /// ```
+    /// Prefer [`crate::ViteDevSource`] (and [`ViteDevSource::into_bundle`]) for new code.
     pub fn from_vite(entry_point: impl Into<String>, vite_url: Option<&str>) -> Self {
-        let base_url = vite_url.unwrap_or("http://localhost:5173");
-        let entry = entry_point.into();
-        let module_name = format!("{}{}", base_url, entry);
+        use crate::react::ViteDevSource;
 
-        // Bootstrap script that loads Vite client for HMR, then the entry point
-        let source = format!(
-            r#"
-// Vite HMR Bootstrap
-(async function() {{
-    console.log('[Vite] Loading HMR client...');
-    
-    // Load Vite HMR client first
-    try {{
-        await import('{base_url}/@vite/client');
-        console.log('[Vite] HMR client loaded');
-    }} catch (e) {{
-        console.warn('[Vite] Could not load HMR client:', e);
-    }}
-    
-    // Load the entry point
-    console.log('[Vite] Loading entry point: {entry}');
-    const mod = await import('{base_url}{entry}');
-    
-    if (!mod.default) {{
-        throw new Error('Entry point does not have a default export');
-    }}
-    
-    console.log('[Vite] Entry point loaded');
-}})();
-"#,
-            base_url = base_url,
-            entry = entry
-        );
-
-        Self {
-            module_name,
-            source_string: source,
+        let mut source = ViteDevSource::default().with_entry_point(entry_point);
+        if let Some(url) = vite_url {
+            source = source.with_dev_server_url(url);
         }
+        source.into()
     }
 }
 

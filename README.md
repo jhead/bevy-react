@@ -21,10 +21,10 @@ Pinned to **Bevy 0.17.3** and **React 19**. See [Bevy version support](docs/BEVY
 
 ## Examples
 
-| [Demo](examples/demo/) | [Menu](examples/menu/) | [Forms](examples/forms/) | [HUD](examples/hud/) |
-| --- | --- | --- | --- |
-| ![Demo](docs/media/demo.png) | ![Menu](docs/media/menu.png) | ![Forms](docs/media/forms.png) | ![HUD](docs/media/hud.png) |
-| Bevy + Vite starter with HMR | Full-screen menu and navigation | TextInput, Checkbox, Slider, Select | ECS stats via `ReactBridge` |
+| [Demo](examples/demo/) | [Menu](examples/menu/) | [Forms](examples/forms/) | [HUD](examples/hud/) | [Gallery](examples/gallery/) |
+| --- | --- | --- | --- | --- |
+| ![Demo](docs/media/demo.png) | ![Menu](docs/media/menu.png) | ![Forms](docs/media/forms.png) | ![HUD](docs/media/hud.png) | Component samples |
+| Bevy + Vite starter with HMR | Full-screen menu and navigation | TextInput, Checkbox, Slider, Select | ECS stats via `ReactBridge` | Storybook-style widget gallery |
 
 See [docs/EXAMPLES.md](docs/EXAMPLES.md) for run instructions.
 
@@ -36,8 +36,10 @@ See [docs/EXAMPLES.md](docs/EXAMPLES.md) for run instructions.
 | [Style Props](docs/STYLE_PROPS.md) | Supported CSS-like style properties |
 | [Architecture](docs/ARCHITECTURE.md) | How the two-runtime bridge works |
 | [Data Bridge](docs/BRIDGE.md) | Push ECS state into React / call Rust from JS |
+| [DevTools](docs/DEVTOOLS.md) | Debug WS bridge + node↔Entity inspector |
 | [Boa Compat](docs/BOA_COMPAT.md) | JS APIs that work / are shimmed / missing in Boa |
-| [Examples](docs/EXAMPLES.md) | Demo, menu, forms, HUD |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | In-game error overlay, stacks, source maps |
+| [Examples](docs/EXAMPLES.md) | Demo, menu, forms, HUD, gallery |
 | [Demo smoke](docs/DEMO_SMOKE.md) | Manual checklist + automated smoke script |
 | [Bevy Version](docs/BEVY_VERSION.md) | Support policy + version matrix |
 | [Project Plan](docs/PROJECT_PLAN.md) | Bridge-first roadmap |

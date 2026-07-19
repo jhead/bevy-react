@@ -13,6 +13,29 @@ declare global {
   function clearTimeout(handle: number): void;
   function setInterval(callback: () => void, delay?: number): number;
   function clearInterval(handle: number): void;
+
+  /**
+   * Browser-like WebSocket (shimmed in Boa via tokio-tungstenite when the
+   * `websocket` Cargo feature is enabled).
+   */
+  class WebSocket {
+    static readonly CONNECTING: 0;
+    static readonly OPEN: 1;
+    static readonly CLOSING: 2;
+    static readonly CLOSED: 3;
+    readonly CONNECTING: 0;
+    readonly OPEN: 1;
+    readonly CLOSING: 2;
+    readonly CLOSED: 3;
+    readonly readyState: number;
+    onopen: ((ev?: unknown) => void) | null;
+    onmessage: ((ev: { data?: unknown }) => void) | null;
+    onerror: ((ev?: unknown) => void) | null;
+    onclose: ((ev?: unknown) => void) | null;
+    constructor(url: string, protocols?: string | string[]);
+    send(data: string): void;
+    close(code?: number, reason?: string): void;
+  }
   
   /**
    * Creates a UI node (NodeBundle, ButtonBundle, ImageBundle, etc.)
@@ -123,6 +146,19 @@ declare global {
    * @param argsJson - JSON-encoded argument (any JSON value)
    */
   function __react_call(name: string, argsJson: string): void;
+
+  /**
+   * Report a JS / React error to the Bevy host (`JsRuntimeError` + in-game overlay).
+   * @param message - Human-readable error message
+   * @param stack - Optional stack trace text
+   */
+  function __react_report_error(message: string, stack?: string): void;
+
+  /**
+   * Resolve a React node id to Bevy `Entity::to_bits()`.
+   * Returns `null` until the ECS entity has been spawned.
+   */
+  function __react_entity_id(nodeId: number): number | null;
 }
 
 export {};

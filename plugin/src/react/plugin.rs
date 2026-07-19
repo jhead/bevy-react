@@ -10,10 +10,14 @@ use crate::react::asset_source::{
     ReactJsModule, ReactJsModuleLoader, reload_modified_react_assets, resolve_react_assets,
 };
 use crate::react::bridge::{ReactBridge, flush_react_bridge, process_react_bridge_calls};
+use crate::react::components_registry::{
+    apply_react_bundles, BundleRegistry, ReactEntityMap,
+};
 use crate::react::event_queue::ReactEventQueue;
 use crate::react::hmr::{ReactReloadFlag, apply_react_hmr_reloads};
 use crate::react::native_functions::ReactJsExtension;
 use crate::react::systems::*;
+use crate::react::widgets::add_widget_plugins;
 
 /// Loads an asset path into [`ReactDefaultFont`] at startup.
 ///
@@ -48,6 +52,8 @@ impl Plugin for ReactPlugin {
     fn build(&self, app: &mut App) {
         log::info!("Building React plugin...");
 
+        add_widget_plugins(app);
+
         app.init_asset::<ReactJsModule>()
             .init_asset_loader::<ReactJsModuleLoader>()
             .init_resource::<ReactRootMap>()
@@ -56,6 +62,8 @@ impl Plugin for ReactPlugin {
             .init_resource::<ReactBridge>()
             .init_resource::<ReactReloadFlag>()
             .init_resource::<ReactDefaultFont>()
+            .init_resource::<BundleRegistry>()
+            .init_resource::<ReactEntityMap>()
             .add_message::<RequestReactFocus>()
             .add_message::<RequestReactBlur>()
             .add_observer(on_react_root_removed)
@@ -74,18 +82,32 @@ impl Plugin for ReactPlugin {
                 Update,
                 (
                     process_react_messages,
+                    ApplyDeferred,
+                    apply_react_bundles,
                     process_react_bridge_calls,
                     handle_input_interactions,
                     handle_pointer_move,
                     handle_click_outside_blur,
                     handle_wheel_scroll,
                     apply_focus_requests,
+                    apply_interaction_styles,
                     handle_keyboard_input,
                     flush_react_events,
                     flush_react_bridge,
                     inspect,
-                ),
+                )
+                    .chain(),
             );
+
+        #[cfg(feature = "devtools")]
+        {
+            app.add_plugins(crate::react::devtools::ReactDevToolsPlugin);
+        }
+
+        #[cfg(feature = "egui")]
+        {
+            app.add_plugins(crate::react::devtools::ReactNodeInspectorPlugin);
+        }
 
         log::info!("React plugin configured");
     }
@@ -97,6 +119,7 @@ fn register_react_extension(
     event_queue: Res<ReactEventQueue>,
     bridge: Res<ReactBridge>,
     reload_flag: Res<ReactReloadFlag>,
+    entity_map: Res<ReactEntityMap>,
 ) {
     let (client, receiver) = ReactClient::new();
 
@@ -105,6 +128,7 @@ fn register_react_extension(
         event_queue.clone(),
         bridge.clone(),
         reload_flag.clone(),
+        entity_map.clone(),
     );
     commands.spawn(JsEngineExtensionComponent::new(react_ext));
     commands.insert_resource(ReactMessageReceiver(receiver));

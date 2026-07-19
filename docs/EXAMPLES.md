@@ -59,6 +59,17 @@ cargo run --manifest-path examples/hud/Cargo.toml
 
 See [examples/hud/README.md](../examples/hud/README.md).
 
+### Gallery (`examples/gallery/`)
+
+Poor-man's Storybook: buttons, text, TextInput, Select, Slider, Checkbox, ProgressBar, and layout samples. Enables the `devtools` feature (WS bridge on `:8098`).
+
+```bash
+cd examples/gallery/ui && pnpm install --ignore-scripts && pnpm dev
+cargo run --manifest-path examples/gallery/Cargo.toml
+```
+
+See [examples/gallery/README.md](../examples/gallery/README.md) and [DEVTOOLS.md](DEVTOOLS.md).
+
 ## Planned
 
 Additional examples are tracked under Epic 8 in [PROJECT_PLAN.md](PROJECT_PLAN.md).

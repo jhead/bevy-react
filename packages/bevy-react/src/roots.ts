@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Fiber } from "react-reconciler";
+import { reportErrorToHost, withErrorBoundary } from "./ErrorBoundary";
 import {
   createBevyReconciler,
   setInstanceLookup,
@@ -38,6 +39,11 @@ export function getInstance(
   return roots.get(rootId)?.instanceMap.get(nodeId);
 }
 
+/** Snapshot of all mounted roots (DevTools / tests). */
+export function listRoots(): BevyRootState[] {
+  return Array.from(roots.values());
+}
+
 export { setInstanceLookup };
 
 /**
@@ -64,10 +70,7 @@ export function ensureRoot(rootId: string): BevyRootState {
     "", // identifierPrefix
     (error) => {
       // Loud by default — silent recoverable errors made blank screens undebugable.
-      console.error("[bevy-react] Recoverable render error:", error);
-      if (error && typeof error === "object" && "stack" in error) {
-        console.error((error as { stack?: string }).stack);
-      }
+      reportErrorToHost(error);
     },
     null // transitionCallbacks
   );
@@ -101,9 +104,14 @@ export function ensureRoot(rootId: string): BevyRootState {
  */
 export function renderRoot(element: ReactNode, rootId: string): void {
   const root = ensureRoot(rootId);
-  root.reconciler.updateContainer(element, root.fiberRoot, null, () => {
-    console.log("[bevy-react] Render complete for root", rootId);
-  });
+  root.reconciler.updateContainer(
+    withErrorBoundary(element),
+    root.fiberRoot,
+    null,
+    () => {
+      console.log("[bevy-react] Render complete for root", rootId);
+    }
+  );
 }
 
 /**

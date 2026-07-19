@@ -30,7 +30,7 @@ impl boa_engine::context::time::Clock for WasmClock {
 #[cfg(not(target_arch = "wasm32"))]
 use crate::js::JsCommand;
 use crate::js::console_log::RustLogLogger;
-use crate::js::error_report::JsErrorReporter;
+use crate::js::error_report::{JsErrorReporter, register_report_error};
 use crate::js::host_hooks::LoggingHostHooks;
 use crate::js::{JsEngine, JsEngineClient, esm::FetchModuleLoader};
 #[cfg(feature = "fetch")]
@@ -145,13 +145,15 @@ pub(crate) fn build_context(
 
     boa_runtime::register(
         (
-            ConsoleExtension(RustLogLogger::new(reporter)),
+            ConsoleExtension(RustLogLogger::new(reporter.clone())),
             TimeoutExtension {},
             MicrotaskExtension {},
         ),
         None,
         &mut context,
     )?;
+
+    register_report_error(&mut context, reporter)?;
 
     #[cfg(feature = "fetch")]
     {

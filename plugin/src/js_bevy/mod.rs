@@ -2,7 +2,10 @@
 //!
 //! Provides Bevy integration for the JavaScript engine.
 //! This plugin manages the JS engine lifecycle and exposes it as Bevy resources.
+//!
+//! Includes a built-in in-game error overlay that reads [`JsRuntimeError`].
 
+mod error_overlay;
 mod plugin;
 
 pub use plugin::{JsEngineExtensionComponent, JsClientResource, JsPlugin, JsRuntimeError};

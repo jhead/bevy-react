@@ -13,6 +13,7 @@ mod websocket;
 mod esm;
 mod builder;
 mod error_report;
+mod sourcemap_enrich;
 mod console_log;
 mod host_hooks;
 #[cfg(feature = "fetch")]

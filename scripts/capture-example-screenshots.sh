@@ -34,7 +34,7 @@ capture_one() {
 }
 
 # Sequential — one Bevy window at a time on the shared display.
-for example in demo menu forms hud; do
+for example in demo menu forms hud gallery; do
   capture_one "$example"
 done
 

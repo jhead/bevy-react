@@ -3,7 +3,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use boa_engine::{Context, JsError, JsValue, js_string};
+use boa_engine::{Context, JsError, JsResult, JsString, JsValue, NativeFunction, js_string};
+use boa_gc::{Finalize, Trace, empty_trace};
+
+use crate::js::sourcemap_enrich::enrich_stack_with_sourcemaps;
 
 /// Where a reported JS runtime error originated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +17,8 @@ pub enum JsErrorSource {
     ModuleLoad,
     Job,
     Panic,
+    /// Explicit report from React (`__react_report_error` / ErrorBoundary).
+    React,
 }
 
 /// One captured JS / engine error with optional stack text.
@@ -27,14 +32,20 @@ pub struct JsErrorRecord {
 /// Thread-safe sink for the latest JS runtime error and engine generation.
 ///
 /// Bevy polls this each frame into [`crate::js_bevy::JsRuntimeError`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Finalize)]
 pub struct JsErrorReporter {
     latest: Arc<Mutex<Option<JsErrorRecord>>>,
     generation: Arc<AtomicU64>,
 }
 
+unsafe impl Trace for JsErrorReporter {
+    empty_trace!();
+}
+
 impl JsErrorReporter {
-    pub fn report(&self, record: JsErrorRecord) {
+    pub fn report(&self, mut record: JsErrorRecord) {
+        record.stack = enrich_stack_with_sourcemaps(record.stack);
+
         match record.source {
             JsErrorSource::Console => {
                 // console.error already logged by the logger; still surface as error state.
@@ -42,7 +53,8 @@ impl JsErrorReporter {
             JsErrorSource::UncaughtRejection
             | JsErrorSource::Script
             | JsErrorSource::ModuleLoad
-            | JsErrorSource::Job => {
+            | JsErrorSource::Job
+            | JsErrorSource::React => {
                 if let Some(ref stack) = record.stack {
                     log::error!(
                         "JS {:?}: {}\n{}",
@@ -64,7 +76,12 @@ impl JsErrorReporter {
         }
     }
 
-    pub fn report_message(&self, source: JsErrorSource, message: impl Into<String>, stack: Option<String>) {
+    pub fn report_message(
+        &self,
+        source: JsErrorSource,
+        message: impl Into<String>,
+        stack: Option<String>,
+    ) {
         self.report(JsErrorRecord {
             message: message.into(),
             stack,
@@ -90,6 +107,53 @@ impl JsErrorReporter {
     pub fn bump_generation(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
     }
+}
+
+/// Register `__react_report_error(message, stack?)` for React / app code.
+pub fn register_report_error(
+    context: &mut Context,
+    reporter: JsErrorReporter,
+) -> Result<(), JsError> {
+    context.register_global_callable(
+        JsString::from("__react_report_error"),
+        2,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue, args: &[JsValue], reporter: &JsErrorReporter, ctx: &mut Context| {
+                report_error_fn(args, reporter, ctx)
+            },
+            reporter,
+        ),
+    )?;
+    Ok(())
+}
+
+fn report_error_fn(
+    args: &[JsValue],
+    reporter: &JsErrorReporter,
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let message = args
+        .first()
+        .map(|v| {
+            v.to_string(context)
+                .map(|s| s.to_std_string_lossy())
+                .unwrap_or_else(|_| v.display().to_string())
+        })
+        .unwrap_or_else(|| "Unknown error".to_string());
+
+    let stack = args.get(1).and_then(|v| {
+        if v.is_undefined() || v.is_null() {
+            return None;
+        }
+        let s = v
+            .to_string(context)
+            .ok()?
+            .to_std_string_lossy();
+        if s.is_empty() { None } else { Some(s) }
+    });
+
+    reporter.report_message(JsErrorSource::React, message, stack);
+    Ok(JsValue::undefined())
 }
 
 /// Format a [`JsError`] into message + optional `.stack`.

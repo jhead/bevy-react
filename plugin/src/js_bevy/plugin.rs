@@ -9,6 +9,10 @@ use crate::js::{
 #[cfg(feature = "websocket")]
 use crate::js::WebSocketExtension;
 
+/// Runs after the JS error reporter is synced into [`JsRuntimeError`].
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct JsRuntimeErrorSyncSet;
+
 /// Bevy Resource wrapper for JsEngineClient.
 ///
 /// This allows the JsEngineClient to be used as a Bevy Resource while
@@ -24,11 +28,12 @@ impl Deref for JsClientResource {
     }
 }
 
-/// Visible Bevy-side error state for JS script/module/console/uncaught failures
-/// and native engine panic restarts.
+/// Visible Bevy-side error state for JS script/module/console/uncaught failures,
+/// React reports, and native engine panic restarts.
 ///
-/// Updated each frame from the shared [`crate::js::JsErrorReporter`]. Apps can
-/// read `last_error` to show an overlay, and watch `engine_generation` to detect
+/// Updated each frame from the shared [`crate::js::JsErrorReporter`].
+/// [`JsPlugin`] shows a built-in high-z-index overlay for `last_error`
+/// (dismiss with the button or Escape). Watch `engine_generation` to detect
 /// native JS-thread restarts (re-dirty React roots as needed).
 #[derive(Resource, Debug, Clone, Default)]
 pub struct JsRuntimeError {
@@ -53,6 +58,7 @@ impl JsRuntimeError {
 /// - Exposes `JsClientResource` as a Bevy resource for script execution
 /// - Ticks the JS event loop each frame
 /// - Syncs [`JsRuntimeError`] from the JS error reporter
+/// - Shows an in-game error overlay for the latest JS / React failure
 /// - Shuts down the engine on [`AppExit`]
 ///
 /// ## Usage
@@ -79,9 +85,16 @@ impl Plugin for JsPlugin {
 
         app.insert_resource(JsClientResource(client))
             .init_resource::<JsRuntimeError>()
-            .add_systems(Update, (tick_js_engine, sync_js_runtime_error))
+            .add_systems(
+                Update,
+                (tick_js_engine, sync_js_runtime_error)
+                    .chain()
+                    .in_set(JsRuntimeErrorSyncSet),
+            )
             .add_systems(Update, on_extension_added)
             .add_systems(Last, shutdown_js_engine_on_exit);
+
+        super::error_overlay::register(app);
     }
 }
 

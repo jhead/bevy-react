@@ -12,6 +12,7 @@
 //!     App::new()
 //!         .add_plugins(DefaultPlugins)
 //!         .add_plugins(ReactPlugin)
+//!         .add_systems(Startup, setup)
 //!         .run();
 //! }
 //!
@@ -38,6 +39,9 @@ pub mod plugin;
 mod asset_source;
 mod bridge;
 mod client;
+pub mod components_registry;
+#[cfg(any(feature = "devtools", feature = "egui"))]
+pub mod devtools;
 mod embedded;
 mod event_queue;
 mod hmr;
@@ -45,18 +49,26 @@ mod native_functions;
 mod style;
 mod systems;
 mod vite;
+mod widgets;
 mod shim;
 
 #[cfg(test)]
 mod message_tests;
 
 pub use plugin::{ReactDefaultFontPlugin, ReactPlugin};
+#[cfg(feature = "devtools")]
+pub use devtools::{ReactDevToolsBridge, ReactDevToolsPlugin, DEVTOOLS_WS_ADDR, DEVTOOLS_WS_PORT};
+#[cfg(feature = "egui")]
+pub use devtools::ReactNodeInspectorPlugin;
 pub use asset_source::{ReactAssetBundle, ReactAssetSource, ReactJsModule};
 pub use bridge::{
     BridgeCall, BridgeCallResult, ReactBridge, flush_react_bridge,
     process_react_bridge_calls, sync_registered_resource_stores,
 };
 pub use client::*;
+pub use components_registry::{
+    apply_react_bundles, BundleRegistry, ReactEntityMap,
+};
 pub use embedded::EmbeddedBundleSource;
 pub use event_queue::{FLUSH_EVENTS_SCRIPT, ReactEvent, ReactEventQueue};
 pub use native_functions::ReactJsExtension;

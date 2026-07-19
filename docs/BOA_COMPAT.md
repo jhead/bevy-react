@@ -10,7 +10,7 @@ Many Web/Node APIs are missing or partial. Prefer portable JS.
 | `setTimeout` / `setInterval` / `rAF` | Shimmed | Via `boa_runtime` timers + rAF→setTimeout |
 | `MessageChannel` | Shimmed | React scheduler |
 | `fetch` | Feature-gated | Enable crate `fetch` feature |
-| `console.*` | Forwarded | Rust `log` + `JsRuntimeError` |
+| `console.*` | Forwarded | Rust `log` + `JsRuntimeError` (in-game overlay via `JsPlugin`) |
 | `Date#toLocaleString` / `toLocaleDateString` / `toLocaleTimeString` | **Shimmed fallback** | Boa Intl is unimplemented; shims use ISO / simple time |
 | `Intl.*` | Minimal stub | `DateTimeFormat` / `NumberFormat` fallbacks only |
 | `navigator.clipboard` | Missing | TextInput uses in-process clipboard |

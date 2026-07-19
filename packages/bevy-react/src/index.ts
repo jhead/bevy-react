@@ -48,10 +48,18 @@ export {
   ensureRoot,
   getInstance,
   getRoot,
+  listRoots,
   renderRoot,
   rootCount,
   unmountRoot,
 } from "./roots";
+
+export {
+  BevyErrorBoundary,
+  reportErrorToHost,
+  withErrorBoundary,
+} from "./ErrorBoundary";
+export type { ReportErrorOptions } from "./ErrorBoundary";
 
 export interface BevyReactApp {
   render: (rootId: string) => void;

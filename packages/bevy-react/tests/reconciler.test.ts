@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import React from "react";
 import {
+  bindEventReconciler,
   createBevyReconciler,
+  dispatchEvent,
   resetBinaryNodeIdCounter,
+  setInstanceLookup,
   type BevyInstanceMap,
 } from "../src/reconciler";
 import { decodeBatch } from "../src/protocol";
@@ -17,6 +20,7 @@ const CONTAINER = { rootId: 0 };
 type Renderer = {
   render: (element: React.ReactNode) => void;
   unmount: () => void;
+  instanceMap: BevyInstanceMap;
 };
 
 function createRenderer(
@@ -30,6 +34,10 @@ function createRenderer(
     instanceMap,
     binaryOps: options?.binaryOps,
   });
+  bindEventReconciler(reconciler);
+  setInstanceLookup((rootId, nodeId) =>
+    rootId === ROOT_ID ? instanceMap.get(nodeId) : undefined
+  );
   // tag 0 historically meant LegacyRoot; react-reconciler 0.32 always creates a
   // concurrent root, so use updateContainerSync + flushSyncWork for tests.
   const fiberRoot = reconciler.createContainer(
@@ -44,6 +52,7 @@ function createRenderer(
   );
 
   return {
+    instanceMap,
     render(element: React.ReactNode) {
       reconciler.updateContainerSync(element, fiberRoot, null, null);
       reconciler.flushSyncWork();
@@ -612,5 +621,58 @@ describe("reconciler binary commit path", () => {
     const unmount = decodeBatch(mock.commitFrames[0]!);
     expect(unmount.ops.at(-1)).toEqual({ op: "Commit" });
     expect(unmount.ops.some((o) => o.op === "DestroyNode")).toBe(true);
+  });
+});
+
+describe("discrete keyboard updates", () => {
+  let mock: MockReactGlobals;
+
+  beforeEach(() => {
+    mock = installMockReactGlobals({ commitOps: false });
+  });
+
+  it("flushes controlled keydown setState between keystrokes", () => {
+    const { render, instanceMap } = createRenderer(mock, { binaryOps: false });
+    let value = "";
+    const keys: string[] = [];
+
+    function Input() {
+      const [v, setV] = React.useState("");
+      value = v;
+      return React.createElement("bevy-text-input", {
+        onKeyDown: (event: { key: string }) => {
+          keys.push(event.key);
+          setV((prev) => prev + event.key);
+        },
+      });
+    }
+
+    render(React.createElement(Input));
+    const nodeId = [...instanceMap.values()].find(
+      (inst) => "type" in inst && inst.type === "bevy-text-input"
+    )?.nodeId;
+    expect(nodeId).toBeTypeOf("number");
+
+    dispatchEvent(ROOT_ID, nodeId!, "keydown", {
+      key: "a",
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false,
+    });
+    expect(keys).toEqual(["a"]);
+    expect(value).toBe("a");
+
+    dispatchEvent(ROOT_ID, nodeId!, "keydown", {
+      key: "b",
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false,
+    });
+    expect(keys).toEqual(["a", "b"]);
+    expect(value).toBe("ab");
   });
 });

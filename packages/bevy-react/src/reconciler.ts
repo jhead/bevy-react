@@ -1,4 +1,9 @@
 import Reconciler from "react-reconciler";
+import {
+  ContinuousEventPriority,
+  DefaultEventPriority,
+  DiscreteEventPriority,
+} from "react-reconciler/constants";
 import type {
   BevyInstance,
   BevyTextInstance,
@@ -25,6 +30,56 @@ type UpdatePayload = Props;
 
 /** Per-root map of host instances keyed by node id. */
 export type BevyInstanceMap = Map<number, PublicInstance>;
+
+/**
+ * React 19 event priorities. The host config previously returned a bogus `16`
+ * and no-op'd `setCurrentUpdatePriority`, so setState from keydown was never
+ * discrete — controlled TextInput updates lagged a stroke and appeared stuck.
+ */
+let currentUpdatePriority: number = DefaultEventPriority;
+let currentEventPriority: number = DefaultEventPriority;
+
+/** Events that must flush sync (keyboard / activation). */
+const DISCRETE_EVENTS = new Set([
+  "click",
+  "press",
+  "release",
+  "keydown",
+  "keyup",
+  "focus",
+  "blur",
+  "change",
+]);
+
+type EventReconcilerApi = {
+  discreteUpdates: (fn: () => void) => void;
+  flushSyncWork: () => void;
+};
+
+/** Last-created reconciler; used to run discreteUpdates/flushSyncWork from dispatch. */
+let eventReconcilerApi: EventReconcilerApi | null = null;
+
+/**
+ * Bind the reconciler instance that should flush discrete host→JS events.
+ * Called from `ensureRoot` whenever a fiber root is created.
+ */
+export function bindEventReconciler(reconciler: {
+  discreteUpdates?: (fn: (...args: unknown[]) => unknown, ...args: unknown[]) => unknown;
+  flushSyncWork?: () => void;
+}): void {
+  eventReconcilerApi = {
+    discreteUpdates: (fn) => {
+      if (typeof reconciler.discreteUpdates === "function") {
+        reconciler.discreteUpdates(fn);
+      } else {
+        fn();
+      }
+    },
+    flushSyncWork: () => {
+      reconciler.flushSyncWork?.();
+    },
+  };
+}
 
 /**
  * Shared JS-side node id allocator for the binary commit path.
@@ -316,6 +371,9 @@ function invokeHandler(
 /**
  * Root-scoped event dispatcher called from Rust (via events.ts host bridge).
  * Bubbling events walk `parentId` until `stopPropagation()` or the root.
+ *
+ * Discrete events (keyboard/click) run under `discreteUpdates` + `flushSyncWork`
+ * so controlled inputs commit between keystrokes.
  */
 export function dispatchEvent(
   rootId: string,
@@ -335,38 +393,59 @@ export function dispatchEvent(
     return;
   }
 
-  const bubbles = BUBBLING_EVENTS.has(event);
-  const state = { stopped: false };
-  const payload =
-    data && typeof data === "object" ? { ...(data as object) } : {};
+  const run = () => {
+    const bubbles = BUBBLING_EVENTS.has(event);
+    const state = { stopped: false };
+    const payload =
+      data && typeof data === "object" ? { ...(data as object) } : {};
 
-  let currentId: number | undefined = nodeId;
-  while (currentId !== undefined) {
-    const instance = lookupInstance(rootId, currentId);
-    if (!instance || !("props" in instance) || !instance.props) {
-      break;
+    let currentId: number | undefined = nodeId;
+    while (currentId !== undefined) {
+      const instance = lookupInstance(rootId, currentId);
+      if (!instance || !("props" in instance) || !instance.props) {
+        break;
+      }
+
+      const synthetic: Record<string, unknown> = {
+        ...payload,
+        type: event,
+        target: nodeId,
+        currentTarget: currentId,
+        stopPropagation: () => {
+          state.stopped = true;
+        },
+      };
+
+      invokeHandler(instance.props, event, synthetic);
+
+      if (!bubbles || state.stopped) {
+        break;
+      }
+
+      currentId =
+        "parentId" in instance
+          ? (instance as BevyInstance).parentId
+          : undefined;
     }
+  };
 
-    const synthetic: Record<string, unknown> = {
-      ...payload,
-      type: event,
-      target: nodeId,
-      currentTarget: currentId,
-      stopPropagation: () => {
-        state.stopped = true;
-      },
-    };
+  const discrete = DISCRETE_EVENTS.has(event);
+  const prevEventPriority = currentEventPriority;
+  if (discrete) {
+    currentEventPriority = DiscreteEventPriority;
+  } else if (event === "mousemove" || event === "drag" || event === "wheel") {
+    currentEventPriority = ContinuousEventPriority;
+  }
 
-    invokeHandler(instance.props, event, synthetic);
-
-    if (!bubbles || state.stopped) {
-      break;
+  try {
+    if (discrete && eventReconcilerApi) {
+      eventReconcilerApi.discreteUpdates(run);
+      eventReconcilerApi.flushSyncWork();
+    } else {
+      run();
     }
-
-    currentId =
-      "parentId" in instance
-        ? (instance as BevyInstance).parentId
-        : undefined;
+  } finally {
+    currentEventPriority = prevEventPriority;
   }
 }
 
@@ -518,7 +597,12 @@ class BevyHostConfig {
 
   scheduleTimeout = setTimeout;
   cancelTimeout = clearTimeout;
-  getCurrentEventPriority = () => 16;
+  // Discrete keydown/click flushing uses microtasks (React 19 custom renderers).
+  supportsMicrotasks = true;
+  scheduleMicrotask = (fn: () => void) => {
+    void Promise.resolve().then(fn);
+  };
+  getCurrentEventPriority = () => currentEventPriority;
 
   getInstanceFromNode = (nodeId: number) =>
     this.instanceMap.get(nodeId) || null;
@@ -902,9 +986,16 @@ class BevyHostConfig {
   suspendInstance = () => {};
   waitForCommitToBeReady = () => null;
   NotPendingTransition = null;
-  setCurrentUpdatePriority = () => {};
-  getCurrentUpdatePriority = () => 16;
-  resolveUpdatePriority = () => 16;
+  setCurrentUpdatePriority = (priority: number) => {
+    currentUpdatePriority = priority;
+  };
+  getCurrentUpdatePriority = () => currentUpdatePriority;
+  resolveUpdatePriority = () => {
+    if (currentEventPriority !== DefaultEventPriority) {
+      return currentEventPriority;
+    }
+    return currentUpdatePriority;
+  };
   resetFormInstance = () => {};
   requestPostPaintCallback = () => {};
   shouldAttemptEagerTransition = () => false;

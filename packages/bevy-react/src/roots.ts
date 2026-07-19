@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { injectBevyReactDevTools } from "./devtools";
 import { reportErrorToHost, withErrorBoundary } from "./ErrorBoundary";
 import {
+  bindEventReconciler,
   createBevyReconciler,
   setInstanceLookup,
   type BevyInstanceMap,
@@ -93,6 +94,8 @@ export function ensureRoot(
   );
 
   injectBevyReactDevTools(reconciler);
+  // Keyboard/click setState must run as discrete + flushSyncWork.
+  bindEventReconciler(reconciler);
 
   const state: BevyRootState = {
     rootId,

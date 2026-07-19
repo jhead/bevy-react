@@ -110,6 +110,8 @@ export function TextInput({
       const current = valueRef.current;
       const next = current.slice(0, start) + insert + current.slice(end);
       const nextCursor = start + insert.length;
+      // Update before parent re-renders — discrete flush may still lag a tick.
+      valueRef.current = next;
       onChange(next);
       setCursor(nextCursor);
       cursorRef.current = nextCursor;
@@ -143,9 +145,22 @@ export function TextInput({
     [bumpBlink]
   );
 
-  const handleKeyDown = useCallback(
-    (event: KeyboardEventData) => {
+  /** Keys that already ran editing logic on keydown (skip duplicate keyup). */
+  const handledOnKeyDownRef = useRef(new Set<string>());
+
+  const handleKeyEvent = useCallback(
+    (event: KeyboardEventData, phase: "keydown" | "keyup") => {
       const key = event.key;
+      if (phase === "keyup") {
+        if (handledOnKeyDownRef.current.has(key)) {
+          handledOnKeyDownRef.current.delete(key);
+          return;
+        }
+        // Host sometimes delivers only keyup after the first glyph — still edit.
+      } else {
+        handledOnKeyDownRef.current.add(key);
+      }
+
       const mod = !!(event.ctrlKey || event.metaKey);
       const shift = !!event.shiftKey;
       const valueNow = valueRef.current;
@@ -278,6 +293,16 @@ export function TextInput({
     [replaceRange, moveCaret, bumpBlink]
   );
 
+  const handleKeyDown = useCallback(
+    (event: KeyboardEventData) => handleKeyEvent(event, "keydown"),
+    [handleKeyEvent]
+  );
+
+  const handleKeyUp = useCallback(
+    (event: KeyboardEventData) => handleKeyEvent(event, "keyup"),
+    [handleKeyEvent]
+  );
+
   const handleFocus = useCallback(() => {
     setIsFocused(true);
     setCursor(valueRef.current.length);
@@ -353,6 +378,7 @@ export function TextInput({
       onFocus={handleFocus}
       onBlur={handleBlur}
       onKeyDown={handleKeyDown}
+      onKeyUp={handleKeyUp}
     >
       {showPlaceholder ? (
         <>

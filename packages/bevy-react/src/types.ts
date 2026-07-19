@@ -257,6 +257,12 @@ export interface BevyInstance {
   children: BevyInstance[];
   /** Parent node id for event bubbling; unset for container children. */
   parentId?: number;
+  /**
+   * HostText children folded into this `bevy-text` node's `content`.
+   * Avoids a dual-entity bug where CreateNode paints glyphs on the host while
+   * UpdateText mutates a sibling HostText entity that never shows.
+   */
+  textSlots?: BevyTextInstance[];
 }
 
 /**
@@ -265,6 +271,8 @@ export interface BevyInstance {
 export interface BevyTextInstance {
   nodeId: number;
   text: string;
+  /** Present when this text is folded into a `bevy-text` host instead of its own entity. */
+  textHost?: BevyInstance;
 }
 
 /**

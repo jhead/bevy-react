@@ -250,12 +250,39 @@ describe("reconciler host config RPC sequences", () => {
     mock.reset();
     render(React.createElement("bevy-text", { children: 1445 }));
 
+    // Must update the bevy-text host via update_node — not a sibling update_text.
     expect(mock.ops()).toEqual(["update_node"]);
+    expect(mock.ops()).not.toContain("update_text");
     if (mock.calls[0].op === "update_node") {
       const props = JSON.parse(mock.calls[0].propsJson) as {
         content?: string;
       };
       expect(props.content).toBe("1445");
+      expect(mock.calls[0].nodeId).toBe(created.nodeId);
+    }
+  });
+
+  it("updates single-expression string text on the same bevy-text node", () => {
+    const { render } = createRenderer(mock);
+    render(React.createElement("bevy-text", null, String(10)));
+
+    const created = mock.calls.find(
+      (c) => c.op === "create_node" && c.type === "bevy-text"
+    );
+    expect(created).toBeDefined();
+    if (!created || created.op !== "create_node") {
+      throw new Error("expected create_node");
+    }
+
+    mock.reset();
+    render(React.createElement("bevy-text", null, String(11)));
+
+    expect(mock.ops()).toContain("update_node");
+    expect(mock.ops()).not.toContain("update_text");
+    const update = mock.calls.find((c) => c.op === "update_node");
+    expect(update).toMatchObject({ nodeId: created.nodeId });
+    if (update && update.op === "update_node") {
+      expect(JSON.parse(update.propsJson)).toMatchObject({ content: "11" });
     }
   });
 

@@ -43,13 +43,46 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return true;
 }
 
-/** Coerce React text children (string | number | boolean) to a content string. */
+/** Coerce a single React text child (string | number | boolean) to content. */
 function textChildContent(children: unknown): string | undefined {
   if (typeof children === "string") return children;
   if (typeof children === "number" || typeof children === "boolean") {
     return String(children);
   }
   return undefined;
+}
+
+/**
+ * Flatten text-only children (including arrays like `["count: ", n]`) to a string.
+ * Returns undefined when children include host elements / non-text values.
+ */
+function flattenTextChildren(children: unknown): string | undefined {
+  const single = textChildContent(children);
+  if (single !== undefined) return single;
+  if (!Array.isArray(children)) return undefined;
+
+  let out = "";
+  for (const child of children) {
+    if (child == null || child === false || child === true) continue;
+    const piece = textChildContent(child);
+    if (piece === undefined) return undefined;
+    out += piece;
+  }
+  return out;
+}
+
+function isTextInstance(
+  child: Instance | TextInstance
+): child is TextInstance {
+  return !("type" in child);
+}
+
+function flushBevyTextContent(
+  rootId: string,
+  host: Instance
+): void {
+  const content = (host.textSlots ?? []).map((slot) => slot.text).join("");
+  __react_update_node(rootId, host.nodeId, JSON.stringify({ content }));
 }
 
 /**
@@ -88,9 +121,9 @@ function diffProps(oldProps: Props, newProps: Props): UpdatePayload | null {
     }
   }
 
-  // String/number/boolean children map to text content (fixes frozen `{value}` HUD clocks).
-  const oldContent = textChildContent(oldProps.children);
-  const newContent = textChildContent(newProps.children);
+  // Text-only children (string/number/boolean or arrays of those) → content.
+  const oldContent = flattenTextChildren(oldProps.children);
+  const newContent = flattenTextChildren(newProps.children);
   if (oldContent !== newContent) {
     if (newContent !== undefined) {
       diff.children = newContent;
@@ -110,13 +143,17 @@ function serializeProps(props: Props, type?: string): string {
   const serializable: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(props)) {
-    // For text elements, include children as the text content
+    // For text hosts, flatten text-only children into `content`.
+    // Do not set content when children include elements — HostText folding handles that.
     if (key === "children") {
-      const content = textChildContent(value);
-      if (content !== undefined) {
-        serializable["content"] = content;
-      } else if (value === undefined || value === null) {
-        serializable["content"] = null;
+      if (type === "bevy-text") {
+        const content = flattenTextChildren(value);
+        if (content !== undefined) {
+          serializable["content"] = content;
+        } else if (value === undefined || value === null) {
+          serializable["content"] = null;
+        }
+        // else: mixed/host children — leave content unset; slots sync later
       }
       continue;
     }
@@ -363,6 +400,18 @@ class BevyHostConfig {
   prepareScopeUpdate = () => {};
   getInstanceFromScope = () => null;
   detachDeletedInstance = (instance: Instance | TextInstance) => {
+    if (isTextInstance(instance)) {
+      if (instance.textHost) {
+        // Folded into bevy-text — host owns the ECS entity.
+        return;
+      }
+      if (instance.nodeId < 0) {
+        return;
+      }
+      this.instanceMap.delete(instance.nodeId);
+      __react_destroy_node(this.props.rootId, instance.nodeId);
+      return;
+    }
     this.instanceMap.delete(instance.nodeId);
     // Host text nodes skip detachDeletedInstance in react-reconciler;
     // host components land here. Destroy is also called from removeChild
@@ -407,15 +456,13 @@ class BevyHostConfig {
     _rootContainer: Container,
     _hostContext: HostContext
   ): TextInstance => {
-    const nodeId = __react_create_text(this.props.rootId, text);
-
-    const instance = {
-      nodeId,
+    // Defer ECS create until we know the parent. Text under `bevy-text` is folded
+    // into the host's content (see appendInitialChild) so UpdateText cannot target
+    // a sibling entity while glyphs live on the host.
+    return {
+      nodeId: -1,
       text,
     };
-
-    this.instanceMap.set(nodeId, instance);
-    return instance;
   }
 
   // -------------------
@@ -465,8 +512,26 @@ class BevyHostConfig {
     _oldText: string,
     newText: string
   ): void => {
-    __react_update_text(this.props.rootId, textInstance.nodeId, newText);
     textInstance.text = newText;
+    if (textInstance.textHost) {
+      flushBevyTextContent(this.props.rootId, textInstance.textHost);
+      return;
+    }
+    if (textInstance.nodeId < 0) {
+      return;
+    }
+    __react_update_text(this.props.rootId, textInstance.nodeId, newText);
+  }
+
+  resetTextContent = (instance: Instance): void => {
+    if (instance.type === "bevy-text") {
+      instance.textSlots = [];
+      __react_update_node(
+        this.props.rootId,
+        instance.nodeId,
+        JSON.stringify({ content: "" })
+      );
+    }
   }
 
   // -------------------
@@ -474,20 +539,96 @@ class BevyHostConfig {
   // -------------------
 
   appendInitialChild = (parent: Instance, child: Instance | TextInstance): void => {
-    __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
-
-    if ("children" in parent && "type" in child) {
-      (child as Instance).parentId = parent.nodeId;
-      parent.children.push(child as Instance);
-    }
+    this.attachChild(parent, child);
   }
 
   appendChild = (parent: Instance, child: Instance | TextInstance): void => {
-    __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
+    this.attachChild(parent, child);
+  }
 
-    if ("children" in parent && "type" in child) {
-      (child as Instance).parentId = parent.nodeId;
-      parent.children.push(child as Instance);
+  private attachChild = (
+    parent: Instance,
+    child: Instance | TextInstance
+  ): void => {
+    if (isTextInstance(child) && parent.type === "bevy-text") {
+      child.textHost = parent;
+      child.nodeId = parent.nodeId;
+      parent.textSlots = parent.textSlots ?? [];
+      parent.textSlots.push(child);
+      flushBevyTextContent(this.props.rootId, parent);
+      return;
+    }
+
+    if (isTextInstance(child)) {
+      if (child.nodeId < 0) {
+        child.nodeId = __react_create_text(this.props.rootId, child.text);
+        this.instanceMap.set(child.nodeId, child);
+      }
+      __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
+      return;
+    }
+
+    __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
+    child.parentId = parent.nodeId;
+    parent.children.push(child);
+  }
+
+  removeChild = (parent: Instance, child: Instance | TextInstance): void => {
+    this.detachChild(parent, child);
+  }
+
+  removeChildFromContainer = (
+    container: Container,
+    child: Instance | TextInstance
+  ): void => {
+    if (isTextInstance(child)) {
+      if (child.textHost) {
+        const host = child.textHost;
+        host.textSlots = (host.textSlots ?? []).filter((s) => s !== child);
+        child.textHost = undefined;
+        flushBevyTextContent(this.props.rootId, host);
+        return;
+      }
+      if (child.nodeId >= 0) {
+        __react_remove_child(this.props.rootId, container.rootId, child.nodeId);
+        __react_destroy_node(this.props.rootId, child.nodeId);
+        this.instanceMap.delete(child.nodeId);
+      }
+      return;
+    }
+
+    __react_remove_child(this.props.rootId, container.rootId, child.nodeId);
+    __react_destroy_node(this.props.rootId, child.nodeId);
+    this.instanceMap.delete(child.nodeId);
+  }
+
+  private detachChild = (
+    parent: Instance,
+    child: Instance | TextInstance
+  ): void => {
+    if (isTextInstance(child) && child.textHost === parent) {
+      parent.textSlots = (parent.textSlots ?? []).filter((s) => s !== child);
+      child.textHost = undefined;
+      flushBevyTextContent(this.props.rootId, parent);
+      return;
+    }
+
+    if (isTextInstance(child)) {
+      if (child.nodeId >= 0) {
+        __react_remove_child(this.props.rootId, parent.nodeId, child.nodeId);
+        __react_destroy_node(this.props.rootId, child.nodeId);
+        this.instanceMap.delete(child.nodeId);
+      }
+      return;
+    }
+
+    __react_remove_child(this.props.rootId, parent.nodeId, child.nodeId);
+    __react_destroy_node(this.props.rootId, child.nodeId);
+    this.instanceMap.delete(child.nodeId);
+    delete child.parentId;
+    const idx = parent.children.findIndex((c) => c.nodeId === child.nodeId);
+    if (idx !== -1) {
+      parent.children.splice(idx, 1);
     }
   }
 
@@ -495,36 +636,16 @@ class BevyHostConfig {
     container: Container,
     child: Instance | TextInstance
   ): void => {
-    __react_append_child(this.props.rootId, container.rootId, child.nodeId);
-    if ("type" in child) {
-      (child as Instance).parentId = undefined;
-    }
-  }
-
-  removeChild = (parent: Instance, child: Instance | TextInstance): void => {
-    __react_remove_child(this.props.rootId, parent.nodeId, child.nodeId);
-    // Despawn now: HostText never gets detachDeletedInstance, and destroying
-    // here also covers host components (detachDeletedInstance is then a no-op).
-    __react_destroy_node(this.props.rootId, child.nodeId);
-    this.instanceMap.delete(child.nodeId);
-    if ("type" in child) {
-      delete (child as Instance).parentId;
-    }
-    if ("children" in parent) {
-      const idx = parent.children.findIndex((c) => c.nodeId === child.nodeId);
-      if (idx !== -1) {
-        parent.children.splice(idx, 1);
+    if (isTextInstance(child)) {
+      if (child.nodeId < 0) {
+        child.nodeId = __react_create_text(this.props.rootId, child.text);
+        this.instanceMap.set(child.nodeId, child);
       }
+      __react_append_child(this.props.rootId, container.rootId, child.nodeId);
+      return;
     }
-  }
-
-  removeChildFromContainer = (
-    container: Container,
-    child: Instance | TextInstance
-  ): void => {
-    __react_remove_child(this.props.rootId, container.rootId, child.nodeId);
-    __react_destroy_node(this.props.rootId, child.nodeId);
-    this.instanceMap.delete(child.nodeId);
+    __react_append_child(this.props.rootId, container.rootId, child.nodeId);
+    child.parentId = undefined;
   }
 
   insertBefore = (
@@ -532,21 +653,54 @@ class BevyHostConfig {
     child: Instance | TextInstance,
     beforeChild: Instance | TextInstance
   ): void => {
-    __react_insert_before(this.props.rootId, parent.nodeId, child.nodeId, beforeChild.nodeId);
+    if (isTextInstance(child) && parent.type === "bevy-text") {
+      child.textHost = parent;
+      child.nodeId = parent.nodeId;
+      parent.textSlots = parent.textSlots ?? [];
+      const beforeIdx = isTextInstance(beforeChild)
+        ? parent.textSlots.indexOf(beforeChild)
+        : parent.textSlots.length;
+      const existingIdx = parent.textSlots.indexOf(child);
+      if (existingIdx !== -1) {
+        parent.textSlots.splice(existingIdx, 1);
+      }
+      if (beforeIdx >= 0) {
+        parent.textSlots.splice(beforeIdx, 0, child);
+      } else {
+        parent.textSlots.push(child);
+      }
+      flushBevyTextContent(this.props.rootId, parent);
+      return;
+    }
 
-    if ("children" in parent && "type" in child) {
-      (child as Instance).parentId = parent.nodeId;
-      // Remove if already present
+    if (isTextInstance(child) && child.nodeId < 0) {
+      child.nodeId = __react_create_text(this.props.rootId, child.text);
+      this.instanceMap.set(child.nodeId, child);
+    }
+    if (isTextInstance(beforeChild) && beforeChild.nodeId < 0) {
+      return;
+    }
+
+    __react_insert_before(
+      this.props.rootId,
+      parent.nodeId,
+      child.nodeId,
+      beforeChild.nodeId
+    );
+
+    if (!isTextInstance(child)) {
+      child.parentId = parent.nodeId;
       const existingIdx = parent.children.findIndex((c) => c.nodeId === child.nodeId);
       if (existingIdx !== -1) {
         parent.children.splice(existingIdx, 1);
       }
-      // Insert before the target
-      const beforeIdx = parent.children.findIndex((c) => c.nodeId === beforeChild.nodeId);
+      const beforeIdx = !isTextInstance(beforeChild)
+        ? parent.children.findIndex((c) => c.nodeId === beforeChild.nodeId)
+        : -1;
       if (beforeIdx !== -1) {
-        parent.children.splice(beforeIdx, 0, child as Instance);
+        parent.children.splice(beforeIdx, 0, child);
       } else {
-        parent.children.push(child as Instance);
+        parent.children.push(child);
       }
     }
   }
@@ -556,7 +710,16 @@ class BevyHostConfig {
     child: Instance | TextInstance,
     beforeChild: Instance | TextInstance
   ): void => {
-    __react_insert_before(this.props.rootId, container.rootId, child.nodeId, beforeChild.nodeId);
+    if (isTextInstance(child) && child.nodeId < 0) {
+      child.nodeId = __react_create_text(this.props.rootId, child.text);
+      this.instanceMap.set(child.nodeId, child);
+    }
+    __react_insert_before(
+      this.props.rootId,
+      container.rootId,
+      child.nodeId,
+      beforeChild.nodeId
+    );
   }
 
   clearContainer = (_container: Container): void => {
@@ -590,15 +753,15 @@ class BevyHostConfig {
   // Misc
   // -------------------
 
-  shouldSetTextContent(_type: Type, props: Props): boolean {
-    // Match React Native: numbers/booleans are text content, not HostText children.
-    const children = props.children;
-    return (
-      typeof children === "string" ||
-      typeof children === "number" ||
-      typeof children === "boolean"
-    );
-  }
+  shouldSetTextContent = (type: Type, props: Props): boolean => {
+    // Prefer host text content for bevy-text when children are text-only
+    // (including `["label: ", n]`). Falls back to HostText folding if React
+    // still creates text instances.
+    if (type === "bevy-text") {
+      return flattenTextChildren(props.children) !== undefined;
+    }
+    return flattenTextChildren(props.children) !== undefined;
+  };
 
   getPublicInstance(instance: Instance | TextInstance): PublicInstance {
     return instance;

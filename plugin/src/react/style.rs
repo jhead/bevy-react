@@ -97,8 +97,9 @@ pub struct StyleProps {
     pub bottom: Option<CssValue>,
     pub left: Option<CssValue>,
 
-    // Border
+    // Border (borderWidth is the TS/CSS alias for uniform border width)
     pub border: Option<CssValue>,
+    pub border_width: Option<CssValue>,
     pub border_top: Option<CssValue>,
     pub border_right: Option<CssValue>,
     pub border_bottom: Option<CssValue>,
@@ -529,8 +530,8 @@ pub fn json_to_style(props: &StyleProps) -> Node {
         style.left = parse_val(&l.0);
     }
 
-    // Border
-    if let Some(ref b) = props.border {
+    // Border — accept `border` or `borderWidth` as uniform width
+    if let Some(ref b) = props.border.as_ref().or(props.border_width.as_ref()) {
         let val = parse_val(&b.0);
         style.border = UiRect::all(val);
     }
@@ -593,6 +594,18 @@ mod tests {
         assert!(parse_color("#f00").is_some());
         assert!(parse_color("rgb(255, 0, 0)").is_some());
         assert!(parse_color("rgba(255, 0, 0, 0.5)").is_some());
+    }
+
+    #[test]
+    fn test_border_width_alias() {
+        let props: StyleProps = serde_json::from_str(r#"{"borderWidth": 2}"#).unwrap();
+        let style = json_to_style(&props);
+        assert_eq!(style.border.left, Val::Px(2.0));
+        assert_eq!(style.border.top, Val::Px(2.0));
+
+        let props_border: StyleProps = serde_json::from_str(r#"{"border": 4}"#).unwrap();
+        let style_border = json_to_style(&props_border);
+        assert_eq!(style_border.border.left, Val::Px(4.0));
     }
 }
 

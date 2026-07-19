@@ -3,21 +3,28 @@
 //! Registers React reconciler native functions with the JS engine.
 
 use boa_engine::{Context, JsError, JsResult, JsString, JsValue, NativeFunction};
+use serde_json::Value;
 
 use crate::{
     js::{JsEngineClient, JsEngineExtension},
-    react::{ReactClient, shim::register_environment_shims},
+    react::{
+        event_queue::ReactEventQueue, ReactClient, shim::register_environment_shims,
+    },
 };
 
 /// React callback provider that registers native functions for the React reconciler.
 #[derive(Clone)]
 pub struct ReactJsExtension {
     client: ReactClient,
+    event_queue: ReactEventQueue,
 }
 
 impl ReactJsExtension {
-    pub fn new(client: ReactClient) -> Self {
-        Self { client }
+    pub fn new(client: ReactClient, event_queue: ReactEventQueue) -> Self {
+        Self {
+            client,
+            event_queue,
+        }
     }
 }
 
@@ -25,13 +32,17 @@ impl JsEngineExtension for ReactJsExtension {
     fn register(&self, context: &mut Context, _client: JsEngineClient) -> Result<(), JsError> {
         log::info!("Registering React native functions");
         register_environment_shims(context);
-        register_react_functions(context, self.client.clone());
+        register_react_functions(context, self.client.clone(), self.event_queue.clone());
         Ok(())
     }
 }
 
 /// Register all React native functions in the JS global scope
-fn register_react_functions(context: &mut Context, react_client: ReactClient) {
+fn register_react_functions(
+    context: &mut Context,
+    react_client: ReactClient,
+    event_queue: ReactEventQueue,
+) {
     // __react_create_node(type: string, props_json: string) -> number
     context
         .register_global_callable(
@@ -167,7 +178,99 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
         )
         .expect("Failed to register __react_clear_container");
 
+    // __react_register_event_dispatcher(callback) -> void
+    // Stores the JS callback on the global object for structured host→JS events.
+    context
+        .register_global_callable(
+            JsString::from("__react_register_event_dispatcher"),
+            1,
+            NativeFunction::from_copy_closure(
+                move |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
+                    register_event_dispatcher_fn(args, ctx)
+                },
+            ),
+        )
+        .expect("Failed to register __react_register_event_dispatcher");
+
+    // __react_flush_events() -> void
+    // Drains the native event queue and invokes the registered dispatcher.
+    context
+        .register_global_callable(
+            JsString::from("__react_flush_events"),
+            0,
+            NativeFunction::from_copy_closure_with_captures(
+                move |_this: &JsValue,
+                      _args: &[JsValue],
+                      queue: &ReactEventQueue,
+                      ctx: &mut Context| { flush_events_fn(queue, ctx) },
+                event_queue,
+            ),
+        )
+        .expect("Failed to register __react_flush_events");
+
     log::debug!("Registered React native functions");
+}
+
+/// __react_register_event_dispatcher(callback)
+fn register_event_dispatcher_fn(args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let callback = args.first().cloned().unwrap_or(JsValue::undefined());
+    if !callback.is_callable() {
+        return Err(JsError::from_opaque(JsValue::from(JsString::from(
+            "__react_register_event_dispatcher expects a function",
+        ))));
+    }
+
+    let global = ctx.global_object();
+    global.set(
+        JsString::from("__react_event_dispatcher"),
+        callback,
+        true,
+        ctx,
+    )?;
+    log::debug!("Registered React event dispatcher callback");
+    Ok(JsValue::undefined())
+}
+
+/// __react_flush_events()
+fn flush_events_fn(queue: &ReactEventQueue, ctx: &mut Context) -> JsResult<JsValue> {
+    let events = queue.drain();
+    if events.is_empty() {
+        return Ok(JsValue::undefined());
+    }
+
+    let global = ctx.global_object();
+    let dispatcher = global.get(JsString::from("__react_event_dispatcher"), ctx)?;
+    let Some(callable) = dispatcher.as_callable() else {
+        log::warn!(
+            "__react_flush_events: no dispatcher registered ({} events dropped)",
+            events.len()
+        );
+        return Ok(JsValue::undefined());
+    };
+
+    for event in events {
+        let payload_json: Value =
+            serde_json::from_str(&event.payload_json).unwrap_or(Value::Null);
+        let payload = JsValue::from_json(&payload_json, ctx)?;
+
+        let call_args = [
+            JsValue::from(JsString::from(event.root_id.as_str())),
+            JsValue::from(event.node_id as f64),
+            JsValue::from(JsString::from(event.event_type.as_str())),
+            payload,
+        ];
+
+        if let Err(err) = callable.call(&JsValue::undefined(), &call_args, ctx) {
+            log::error!(
+                "Failed to dispatch React event {} on node {}: {:?}",
+                event.event_type,
+                event.node_id,
+                err
+            );
+        }
+    }
+
+    Ok(JsValue::undefined())
 }
 
 /// __react_create_node(type, props_json) -> node_id

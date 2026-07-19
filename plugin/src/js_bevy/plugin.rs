@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use std::{ops::Deref, sync::Arc};
 
-use crate::js::{ JsEngineBuilder, JsEngineClient, JsEngineExtension};
+use crate::js::{JsEngineBuilder, JsEngineClient, JsEngineExtension};
 #[cfg(feature = "websocket")]
 use crate::js::WebSocketExtension;
 
@@ -28,6 +28,7 @@ impl Deref for JsClientResource {
 /// - Starts the JS engine on a dedicated thread
 /// - Exposes `JsClientResource` as a Bevy resource for script execution
 /// - Ticks the JS event loop each frame
+/// - Shuts down the engine on [`AppExit`]
 ///
 /// ## Usage
 ///
@@ -42,12 +43,10 @@ impl Plugin for JsPlugin {
     fn build(&self, app: &mut App) {
         log::info!("Starting JS engine...");
 
-        let mut builder = JsEngineBuilder::new();
+        let builder = JsEngineBuilder::new();
         
         #[cfg(feature = "websocket")]
-        {
-            builder = builder.with_extension(WebSocketExtension {});
-        }
+        let builder = builder.with_extension(WebSocketExtension {});
         
         let engine = builder.build().unwrap();
 
@@ -55,13 +54,27 @@ impl Plugin for JsPlugin {
 
         app.insert_resource(JsClientResource(client))
             .add_systems(Update, tick_js_engine)
-            .add_systems(Update, on_extension_added);
+            .add_systems(Update, on_extension_added)
+            .add_systems(Last, shutdown_js_engine_on_exit);
     }
 }
 
 /// Tick the JS event loop each frame.
 fn tick_js_engine(client: Res<JsClientResource>) {
     client.flush_event_loop();
+}
+
+fn shutdown_js_engine_on_exit(
+    mut exits: MessageReader<AppExit>,
+    client: Res<JsClientResource>,
+) {
+    if exits.is_empty() {
+        return;
+    }
+    // Consume so we only shut down once even if multiple exit messages arrive.
+    for _ in exits.read() {}
+    log::info!("AppExit received — shutting down JS engine");
+    client.shutdown();
 }
 
 #[derive(Component)]

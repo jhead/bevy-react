@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust-native:
+    name: Rust native (test + clippy)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugin
+
+      - name: cargo test
+        run: cargo test
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  rust-wasm:
+    name: Rust WASM build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: plugin
+
+      # websocket (tokio-tungstenite) is native-only; build WASM with fetch only
+      - name: cargo build (wasm32)
+        run: cargo build --target wasm32-unknown-unknown --no-default-features --features fetch
+
+  bevy-react-ts:
+    name: bevy-react (build + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/bevy-react
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+  demo-ui:
+    name: Demo UI build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/demo/ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          # demo ui ships package-lock.json only (outside pnpm workspace); skip lock cache
+
+      - name: Install dependencies
+        # outside the monorepo workspace; ignore lifecycle scripts (local file: bevy-react)
+        run: pnpm install --ignore-scripts
+
+      - name: Build bevy-react package (file: dependency)
+        run: pnpm build
+        working-directory: packages/bevy-react
+
+      - name: Build
+        run: pnpm build

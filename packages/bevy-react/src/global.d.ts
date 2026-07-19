@@ -73,6 +73,23 @@ declare global {
    * Clears all nodes from the root container
    */
   function __react_clear_container(rootId: string): void;
+
+  /**
+   * Registers a callback the host invokes when draining the React event queue.
+   */
+  function __react_register_event_dispatcher(
+    callback: (
+      rootId: string,
+      nodeId: number,
+      eventType: string,
+      payload: unknown
+    ) => void
+  ): void;
+
+  /**
+   * Drains the host event queue and invokes the registered dispatcher.
+   */
+  function __react_flush_events(): void;
 }
 
 export {};

@@ -1,2 +1,10 @@
 export * from "./Intrinsics";
 export * from "./TextInput";
+export * from "./ScrollView";
+export * from "./Checkbox";
+export * from "./Slider";
+export * from "./Select";
+export * from "./ProgressBar";
+export * from "./Portal";
+export { useInteraction } from "../hooks/useInteraction";
+export type { InteractionState } from "../hooks/useInteraction";

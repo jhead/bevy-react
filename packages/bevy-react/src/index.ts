@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { createBevyReconciler, dispatchEvent, type BevyReconciler } from "./reconciler";
+import { installEventDispatcher } from "./events";
 
 // Import types module for side-effects (registers JSX global augmentation)
 import "./types";
@@ -11,6 +12,13 @@ export * from "./types";
 
 // Export Bevy UI components
 export *from "./components";
+
+export { installEventDispatcher, hostDispatchEvent } from "./events";
+export type {
+  HostEventPayload,
+  KeyboardEventPayload,
+  PointerEventPayload,
+} from "./events";
 
 export interface BevyReactApp {
   render: (rootId: string) => void;
@@ -32,6 +40,9 @@ let fiberRoot: ReturnType<BevyReconciler["createContainer"]> | null = null;
  * Render a React element tree to Bevy UI.
  */
 function render(element: ReactNode, rootId: string): void {
+  // Ensure the host→JS callback is registered (natives exist by the time render runs).
+  installEventDispatcher();
+
   const reconciler = createBevyReconciler({ rootId });
   log("Created reconciler with rootId", rootId);
 
@@ -67,6 +78,7 @@ function render(element: ReactNode, rootId: string): void {
 }
 
 export function createBevyApp(element: ReactNode): BevyReactApp {
+  installEventDispatcher();
   return {
     dispatchEvent,
     render: (rootId: string) => render(element, rootId),

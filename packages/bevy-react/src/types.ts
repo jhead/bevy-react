@@ -64,7 +64,10 @@ export interface BevyStyle {
   paddingBottom?: string | number;
 
   // Border
+  /** Uniform border width (preferred). Accepted by Rust as alias for `border`. */
   borderWidth?: string | number;
+  /** @deprecated Prefer `borderWidth` — kept as alias for Rust `border`. */
+  border?: string | number;
   borderColor?: string;
   borderRadius?: string | number;
 
@@ -86,22 +89,38 @@ export interface NodeProps {
 }
 
 /**
- * Props for the <button> element (ButtonBundle with interaction)
+ * Pointer / cursor payload from the host event queue.
  */
-export interface ButtonProps extends NodeProps {
-  onClick?: () => void;
-  onPress?: () => void;
-  onRelease?: () => void;
-  onHover?: () => void;
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
+export interface PointerEventData {
+  x?: number;
+  y?: number;
+  normalized?: boolean;
+  cursorOver?: boolean;
 }
 
 /**
- * Keyboard event data
+ * Props for the <button> element (ButtonBundle with interaction)
+ */
+export interface ButtonProps extends NodeProps {
+  onClick?: (event?: PointerEventData) => void;
+  onPress?: (event?: PointerEventData) => void;
+  onRelease?: (event?: PointerEventData) => void;
+  onHover?: (event?: PointerEventData) => void;
+  onMouseEnter?: (event?: PointerEventData) => void;
+  onMouseLeave?: (event?: PointerEventData) => void;
+}
+
+/**
+ * Keyboard event data (DOM-like logical key + modifiers from the host)
  */
 export interface KeyboardEventData {
   key: string;
+  shiftKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+  metaKey?: boolean;
+  repeat?: boolean;
+  text?: string;
 }
 
 /**
@@ -111,6 +130,7 @@ export interface TextInputInternalProps extends NodeProps {
   onFocus?: () => void;
   onBlur?: () => void;
   onKeyDown?: (event: KeyboardEventData) => void;
+  onKeyUp?: (event: KeyboardEventData) => void;
 }
 
 /**

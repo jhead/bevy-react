@@ -4,112 +4,141 @@ use bevy::ecs::entity::Entities;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::ButtonState;
 use bevy::prelude::*;
+use bevy::ui::RelativeCursorPosition;
+use serde_json::{Value, json};
 
 use crate::js_bevy::JsClientResource;
-use crate::react::systems::{Focusable, FocusedNode, ReactNode, ReactScriptSource};
+use crate::react::event_queue::{
+    keyboard_modifiers, logical_key_to_string, pointer_payload, FLUSH_EVENTS_SCRIPT, ReactEventQueue,
+};
+use crate::react::systems::{Focusable, FocusedNode, ReactNode, ReactRoot};
 
-/// Component tracking the previous interaction state for hover detection
+/// Component tracking the previous interaction state for hover / press detection
 #[derive(Component, Default)]
 pub struct PreviousInteraction(pub Interaction);
 
-/// Handle UI interactions and dispatch events to JS
+/// Handle UI interactions and enqueue events for the native JS dispatcher
 pub fn handle_input_interactions(
-    query: Query<(&Interaction, &ReactNode, Entity, Option<&Focusable>), Changed<Interaction>>,
-    js_client: Option<Res<JsClientResource>>,
+    mut query: Query<(
+        &Interaction,
+        &ReactNode,
+        Entity,
+        Option<&Focusable>,
+        Option<&mut PreviousInteraction>,
+        Option<&RelativeCursorPosition>,
+    )>,
+    event_queue: Option<Res<ReactEventQueue>>,
     mut focused: ResMut<FocusedNode>,
     parents: Query<&ChildOf>,
-    scripts: Query<&ReactScriptSource>,
+    roots: Query<&ReactRoot>,
+    windows: Query<&Window>,
+    mut commands: Commands,
 ) {
-    let Some(js_client) = js_client else {
+    let Some(event_queue) = event_queue else {
         return;
     };
 
-    for (interaction, react_node, entity, focusable) in &query {
-        let Some(module_name) = find_module_name(entity, &parents, &scripts) else {
-            log::warn!("handle_input_interactions: No React script source found");
+    let window_cursor = windows
+        .iter()
+        .find_map(|w| w.cursor_position());
+
+    for (interaction, react_node, entity, focusable, prev, relative) in &mut query {
+        let prev_interaction = prev
+            .as_ref()
+            .map(|p| p.0)
+            .unwrap_or(Interaction::None);
+
+        if *interaction == prev_interaction {
+            continue;
+        }
+
+        let Some(root_id) = find_root_id(entity, &parents, &roots) else {
+            log::warn!("handle_input_interactions: No ReactRoot found");
             continue;
         };
 
-        if *interaction == Interaction::Pressed {
-            // Handle focus for focusable elements
+        let node_id = react_node.node_id;
+        let payload = pointer_payload(relative, window_cursor);
+
+        // Ensure relative cursor tracking for subsequent pointer events
+        if relative.is_none() {
+            commands
+                .entity(entity)
+                .insert(RelativeCursorPosition::default());
+        }
+
+        let was_hovered = matches!(
+            prev_interaction,
+            Interaction::Hovered | Interaction::Pressed
+        );
+        let is_hovered = matches!(
+            *interaction,
+            Interaction::Hovered | Interaction::Pressed
+        );
+        let was_pressed = prev_interaction == Interaction::Pressed;
+        let is_pressed = *interaction == Interaction::Pressed;
+
+        // Focus on press for focusable elements
+        if is_pressed && !was_pressed {
             if focusable.is_some() {
                 let old_focused = focused.node_id;
-                
-                // Blur previous element if different
+
                 if let Some(old_id) = old_focused {
-                    if old_id != react_node.node_id {
-                        // Use the old module name if available, otherwise use current
-                        let blur_module = focused.module_name.as_ref().unwrap_or(&module_name);
-                        js_client.execute(format!(
-                            r#"
-                            (async () => {{
-                                try {{
-                                    const mod = await import('{blur_module}');
-                                    mod.default.dispatchEvent({old_id}, 'blur');
-                                }} catch (err) {{
-                                    console.error("Failed to dispatch blur event:", err);
-                                }}
-                            }})()
-                            "#,
-                        ));
+                    if old_id != node_id {
+                        // `module_name` field stores root_id (legacy field name in FocusedNode)
+                        let blur_root = focused
+                            .module_name
+                            .clone()
+                            .unwrap_or_else(|| root_id.clone());
+                        event_queue.push_event(blur_root, old_id, "blur", Value::Null);
                     }
                 }
-                
-                // Focus the new element and cache the module name
-                focused.node_id = Some(react_node.node_id);
+
+                focused.node_id = Some(node_id);
                 focused.entity = Some(entity);
-                focused.module_name = Some(module_name.clone());
-                
-                js_client.execute(format!(
-                    r#"
-                    (async () => {{
-                        try {{
-                            const mod = await import('{module_name}');
-                            mod.default.dispatchEvent({node_id}, 'focus');
-                        }} catch (err) {{
-                            console.error("Failed to dispatch focus event:", err);
-                        }}
-                    }})()
-                    "#,
-                    module_name = module_name,
-                    node_id = react_node.node_id
-                ));
+                focused.module_name = Some(root_id.clone());
+
+                event_queue.push_event(root_id.clone(), node_id, "focus", Value::Null);
             }
 
-            log::debug!(
-                "Node clicked: id={}, module={}",
-                react_node.node_id,
-                module_name
-            );
-            js_client.execute(format!(
-                r#"
-                (async () => {{
-                    try {{
-                        const mod = await import('{module_name}');
-                        mod.default.dispatchEvent({node_id}, 'click');
-                    }} catch (err) {{
-                        console.error("Failed to dispatch event:", err);
-                    }}
-                }})()
-            "#,
-                module_name = module_name,
-                node_id = react_node.node_id
-            ));
+            log::debug!("Node press: id={}, root={}", node_id, root_id);
+            event_queue.push_event(root_id.clone(), node_id, "press", payload.clone());
+            // Keep existing click-on-press timing
+            event_queue.push_event(root_id.clone(), node_id, "click", payload.clone());
+        }
+
+        if was_pressed && !is_pressed {
+            log::debug!("Node release: id={}, root={}", node_id, root_id);
+            event_queue.push_event(root_id.clone(), node_id, "release", payload.clone());
+        }
+
+        if !was_hovered && is_hovered {
+            event_queue.push_event(root_id.clone(), node_id, "mouseenter", payload.clone());
+        } else if was_hovered && !is_hovered {
+            event_queue.push_event(root_id.clone(), node_id, "mouseleave", payload);
+        }
+
+        if let Some(mut prev) = prev {
+            prev.0 = *interaction;
+        } else {
+            commands
+                .entity(entity)
+                .insert(PreviousInteraction(*interaction));
         }
     }
 }
 
-/// Find the module name by traversing up the entity hierarchy
-fn find_module_name(
+/// Find the React root id by traversing up the entity hierarchy
+fn find_root_id(
     entity: Entity,
     parents: &Query<&ChildOf>,
-    scripts: &Query<&ReactScriptSource>,
+    roots: &Query<&ReactRoot>,
 ) -> Option<String> {
     let mut current = Some(entity);
 
     while let Some(e) = current {
-        if let Ok(script) = scripts.get(e) {
-            return Some(script.module_name.clone());
+        if let Ok(root) = roots.get(e) {
+            return Some(root.id.clone());
         }
 
         if let Ok(child_of) = parents.get(e) {
@@ -125,9 +154,10 @@ fn find_module_name(
 pub fn handle_keyboard_input(
     mut keyboard_events: MessageReader<KeyboardInput>,
     focused: Res<FocusedNode>,
-    js_client: Option<Res<JsClientResource>>,
+    event_queue: Option<Res<ReactEventQueue>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
 ) {
-    let Some(js_client) = js_client else {
+    let Some(event_queue) = event_queue else {
         return;
     };
 
@@ -135,113 +165,61 @@ pub fn handle_keyboard_input(
         return;
     };
 
-    let Some(ref module_name) = focused.module_name else {
+    // Legacy field: stores root_id for the focused element
+    let Some(ref root_id) = focused.module_name else {
         return;
     };
 
+    let modifiers = keyboard_modifiers(&keyboard);
+
     for event in keyboard_events.read() {
-        if event.state != ButtonState::Pressed {
-            continue;
+        let event_type = match event.state {
+            ButtonState::Pressed => "keydown",
+            ButtonState::Released => "keyup",
+        };
+
+        let key = logical_key_to_string(&event.logical_key);
+
+        let mut payload = modifiers.as_object().cloned().unwrap_or_default();
+        payload.insert("key".to_string(), json!(key));
+        payload.insert("repeat".to_string(), json!(event.repeat));
+        if let Some(text) = event.text.as_ref() {
+            payload.insert("text".to_string(), json!(text.to_string()));
         }
 
-        // Convert the key to a string representation
-        let key_str = format!("{:?}", event.key_code);
-        
         log::debug!(
-            "Keyboard event: key={}, focused_node={}",
-            key_str,
+            "Keyboard event: type={}, key={}, focused_node={}",
+            event_type,
+            payload.get("key").and_then(|v| v.as_str()).unwrap_or(""),
             focused_node_id
         );
 
-        // Escape JSON special characters in key string
-        let key_escaped = key_str.replace('\\', "\\\\").replace('"', "\\\"");
-
-        js_client.execute(format!(
-            r#"
-            (async () => {{
-                try {{
-                    const mod = await import('{module_name}');
-                    mod.default.dispatchEvent({node_id}, 'keydown', {{ key: "{key}" }});
-                }} catch (err) {{
-                    console.error("Failed to dispatch keydown event:", err);
-                }}
-            }})()
-            "#,
-            module_name = module_name,
-            node_id = focused_node_id,
-            key = key_escaped
-        ));
+        event_queue.push_event(
+            root_id.clone(),
+            focused_node_id,
+            event_type,
+            Value::Object(payload),
+        );
     }
 }
 
-/// Handle hover enter/leave events by tracking interaction state changes
-pub fn handle_hover_events(
-    mut query: Query<(&Interaction, &ReactNode, Entity, Option<&mut PreviousInteraction>)>,
+/// Drain the event queue into JS via a fixed native flush (no eval interpolation).
+pub fn flush_react_events(
+    event_queue: Option<Res<ReactEventQueue>>,
     js_client: Option<Res<JsClientResource>>,
-    parents: Query<&ChildOf>,
-    scripts: Query<&ReactScriptSource>,
-    mut commands: Commands,
 ) {
+    let Some(event_queue) = event_queue else {
+        return;
+    };
     let Some(js_client) = js_client else {
         return;
     };
 
-    for (interaction, react_node, entity, prev) in &mut query {
-        let prev_interaction = prev
-            .as_ref()
-            .map(|p| p.0)
-            .unwrap_or(Interaction::None);
-
-        // Skip if no change
-        if *interaction == prev_interaction {
-            continue;
-        }
-
-        let Some(module_name) = find_module_name(entity, &parents, &scripts) else {
-            continue;
-        };
-
-        let node_id = react_node.node_id;
-
-        // Detect hover transitions
-        let was_hovered = matches!(prev_interaction, Interaction::Hovered | Interaction::Pressed);
-        let is_hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
-
-        if !was_hovered && is_hovered {
-            js_client.execute(format!(
-                r#"
-                (async () => {{
-                    try {{
-                        const mod = await import('{module_name}');
-                        mod.default.dispatchEvent({node_id}, 'mouseenter');
-                    }} catch (err) {{
-                        console.error("Failed to dispatch mouseenter event:", err);
-                    }}
-                }})()
-                "#,
-            ));
-        } else if was_hovered && !is_hovered {
-            js_client.execute(format!(
-                r#"
-                (async () => {{
-                    try {{
-                        const mod = await import('{module_name}');
-                        mod.default.dispatchEvent({node_id}, 'mouseleave');
-                    }} catch (err) {{
-                        console.error("Failed to dispatch mouseleave event:", err);
-                    }}
-                }})()
-                "#,
-            ));
-        }
-
-        // Update stored state
-        if let Some(mut prev) = prev {
-            prev.0 = *interaction;
-        } else {
-            commands.entity(entity).insert(PreviousInteraction(*interaction));
-        }
+    if event_queue.is_empty() {
+        return;
     }
+
+    js_client.execute(FLUSH_EVENTS_SCRIPT);
 }
 
 pub fn inspect(

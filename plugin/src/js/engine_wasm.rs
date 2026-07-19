@@ -8,6 +8,10 @@
 //! shared state: the command queue (`Arc<Mutex<VecDeque<JsCommand>>>`) plays the
 //! role the channel played on native, and the Bevy frame tick drives execution
 //! instead of a blocking `receiver.recv()` loop.
+//!
+//! Async JS (promises, `setTimeout`, dynamic `import`) is advanced by the
+//! budgeted `FrameJobExecutor` installed on the Boa context — each frame pumps
+//! ready jobs without `block_on`.
 
 use boa_engine::{Context, JsError};
 use std::sync::Arc;

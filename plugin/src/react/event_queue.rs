@@ -1,0 +1,161 @@
+//! Native React event queue (host → JS).
+//!
+//! Bevy systems push structured events here; a fixed `__react_flush_events()` script
+//! drains the queue on the JS thread and invokes the registered dispatcher callback.
+//! No module-name string interpolation or async `import()` for event delivery.
+
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+
+use bevy::input::keyboard::Key;
+use bevy::prelude::*;
+use bevy::ui::RelativeCursorPosition;
+use boa_gc::{Finalize, Trace, empty_trace};
+use serde_json::{Value, json};
+
+/// A single UI event to deliver into the JS React tree.
+#[derive(Clone, Debug)]
+pub struct ReactEvent {
+    pub root_id: String,
+    pub node_id: u64,
+    pub event_type: String,
+    /// JSON object (or `null`) passed as the 4th argument to the JS dispatcher.
+    pub payload_json: String,
+}
+
+/// Thread-safe queue shared between Bevy systems and Boa native functions.
+#[derive(Clone, Default, Finalize, Resource)]
+pub struct ReactEventQueue {
+    inner: Arc<Mutex<VecDeque<ReactEvent>>>,
+}
+
+unsafe impl Trace for ReactEventQueue {
+    empty_trace!();
+}
+
+impl ReactEventQueue {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&self, event: ReactEvent) {
+        if let Ok(mut q) = self.inner.lock() {
+            q.push_back(event);
+        }
+    }
+
+    pub fn push_event(
+        &self,
+        root_id: impl Into<String>,
+        node_id: u64,
+        event_type: impl Into<String>,
+        payload: Value,
+    ) {
+        self.push(ReactEvent {
+            root_id: root_id.into(),
+            node_id,
+            event_type: event_type.into(),
+            payload_json: payload.to_string(),
+        });
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|q| q.is_empty())
+            .unwrap_or(true)
+    }
+
+    pub fn drain(&self) -> Vec<ReactEvent> {
+        self.inner
+            .lock()
+            .map(|mut q| q.drain(..).collect())
+            .unwrap_or_default()
+    }
+}
+
+/// Fixed script executed on the JS thread to drain [`ReactEventQueue`].
+pub const FLUSH_EVENTS_SCRIPT: &str = "__react_flush_events();";
+
+/// Build a pointer payload from optional relative + window cursor positions.
+pub fn pointer_payload(
+    relative: Option<&RelativeCursorPosition>,
+    window_cursor: Option<Vec2>,
+) -> Value {
+    if let Some(rel) = relative {
+        if let Some(normalized) = rel.normalized {
+            return json!({
+                "x": normalized.x,
+                "y": normalized.y,
+                "normalized": true,
+                "cursorOver": rel.cursor_over,
+            });
+        }
+    }
+
+    if let Some(pos) = window_cursor {
+        return json!({
+            "x": pos.x,
+            "y": pos.y,
+            "normalized": false,
+        });
+    }
+
+    Value::Null
+}
+
+/// Convert Bevy logical [`Key`] to a DOM-like `KeyboardEvent.key` string.
+pub fn logical_key_to_string(key: &Key) -> String {
+    match key {
+        Key::Character(s) => s.to_string(),
+        Key::Unidentified(_) => "Unidentified".to_string(),
+        Key::Dead(_) => "Dead".to_string(),
+        Key::Alt | Key::AltGraph => "Alt".to_string(),
+        Key::CapsLock => "CapsLock".to_string(),
+        Key::Control => "Control".to_string(),
+        Key::Fn => "Fn".to_string(),
+        Key::FnLock => "FnLock".to_string(),
+        Key::NumLock => "NumLock".to_string(),
+        Key::ScrollLock => "ScrollLock".to_string(),
+        Key::Shift => "Shift".to_string(),
+        Key::Symbol => "Symbol".to_string(),
+        Key::SymbolLock => "SymbolLock".to_string(),
+        Key::Meta => "Meta".to_string(),
+        Key::Hyper => "Hyper".to_string(),
+        Key::Super => "Super".to_string(),
+        Key::Enter => "Enter".to_string(),
+        Key::Tab => "Tab".to_string(),
+        Key::Space => " ".to_string(),
+        Key::ArrowDown => "ArrowDown".to_string(),
+        Key::ArrowLeft => "ArrowLeft".to_string(),
+        Key::ArrowRight => "ArrowRight".to_string(),
+        Key::ArrowUp => "ArrowUp".to_string(),
+        Key::End => "End".to_string(),
+        Key::Home => "Home".to_string(),
+        Key::PageDown => "PageDown".to_string(),
+        Key::PageUp => "PageUp".to_string(),
+        Key::Backspace => "Backspace".to_string(),
+        Key::Delete => "Delete".to_string(),
+        Key::Insert => "Insert".to_string(),
+        Key::Escape => "Escape".to_string(),
+        Key::ContextMenu => "ContextMenu".to_string(),
+        other => {
+            // Named keys (media, browser, etc.): Debug name without the enum path noise.
+            let debug = format!("{other:?}");
+            debug
+                .strip_prefix("Key::")
+                .unwrap_or(&debug)
+                .to_string()
+        }
+    }
+}
+
+/// Keyboard modifier flags from [`ButtonInput<KeyCode>`].
+pub fn keyboard_modifiers(keyboard: &ButtonInput<KeyCode>) -> Value {
+    json!({
+        "shiftKey": keyboard.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]),
+        "ctrlKey": keyboard.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]),
+        "altKey": keyboard.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]),
+        "metaKey": keyboard.any_pressed([KeyCode::SuperLeft, KeyCode::SuperRight]),
+    })
+}

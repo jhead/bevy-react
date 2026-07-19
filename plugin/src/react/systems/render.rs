@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy::ui::Display;
 
 use crate::react::client::ReactClientProto;
 use crate::react::style::{json_to_style, parse_color, parse_props, parse_val};
@@ -12,6 +11,7 @@ pub fn process_react_messages(
     asset_server: Res<AssetServer>,
     root_map: Res<ReactRootMap>,
     mut contexts: Query<(Entity, Mut<ReactContext>)>,
+    text_nodes: Query<(), With<ReactTextNode>>,
 ) {
     let Some(receiver) = receiver else {
         return;
@@ -107,12 +107,19 @@ pub fn process_react_messages(
                     continue;
                 };
 
+                let is_text = context
+                    .nodes
+                    .get(&node_id)
+                    .map(|entity| text_nodes.get(*entity).is_ok())
+                    .unwrap_or(false);
+
                 handle_update_node(
                     &mut commands,
                     context.as_mut(),
                     &asset_server,
                     node_id,
                     &props_json,
+                    is_text,
                 );
             }
 
@@ -157,11 +164,11 @@ pub fn process_react_messages(
                 let Some(root) = root_map.roots.get(&root_id) else {
                     continue;
                 };
-                let Ok((_, mut context)) = contexts.get_mut(*root) else {
+                let Ok((context_entity, mut context)) = contexts.get_mut(*root) else {
                     continue;
                 };
 
-                handle_destroy_node(&mut commands, &mut context, node_id);
+                handle_destroy_node(&mut commands, context_entity, context.as_mut(), node_id);
             }
 
             ReactClientProto::ClearContainer { root_id } => {
@@ -208,7 +215,7 @@ fn handle_create_node(
             // Image node
             let mut cmd = commands.spawn((style, ReactNode { node_id }));
 
-            if let Some(image_path) = props.src.as_deref().or(props.image.as_deref()) {
+            if let Some(image_path) = props.src.clone().or(props.image.clone()) {
                 let image_handle: Handle<Image> = asset_server.load(image_path);
                 cmd.insert(ImageNode::new(image_handle));
             }
@@ -387,6 +394,7 @@ fn handle_update_node(
     asset_server: &AssetServer,
     node_id: u64,
     props_json: &str,
+    is_text: bool,
 ) {
     let Some(entity) = context.nodes.get(&node_id).copied() else {
         log::warn!("Failed to update node: id={} (entity not found)", node_id);
@@ -395,50 +403,112 @@ fn handle_update_node(
 
     let props = parse_props(props_json);
 
-    if let Some(ref style_props) = props.style {
-        let style = json_to_style(style_props);
-        commands.entity(entity).insert(style);
+    if is_text {
+        // Text nodes: only Text / TextColor / TextFont — never layout Node or BackgroundColor
+        if let Some(ref content) = props.content {
+            commands.entity(entity).insert(Text::new(content.clone()));
+        }
+        match props.style.as_ref() {
+            Some(style_props) => {
+                match style_props.color.as_deref().and_then(parse_color) {
+                    Some(color) => {
+                        commands.entity(entity).insert(TextColor(color));
+                    }
+                    None => {
+                        commands.entity(entity).remove::<TextColor>();
+                    }
+                }
+                match style_props.font_size.as_ref() {
+                    Some(font_size) => {
+                        if let Val::Px(px) = parse_val(&font_size.0) {
+                            commands.entity(entity).insert(TextFont::from_font_size(px));
+                        }
+                    }
+                    None => {
+                        commands.entity(entity).remove::<TextFont>();
+                    }
+                }
+            }
+            None => {
+                commands.entity(entity).remove::<TextColor>();
+                commands.entity(entity).remove::<TextFont>();
+            }
+        }
+        log::info!("Updated text node: id={}", node_id);
+        return;
+    }
 
-        // Update colors
-        if let Some(ref bg) = style_props.background_color {
-            if let Some(color) = parse_color(bg) {
-                commands.entity(entity).insert(BackgroundColor(color));
+    match props.style.as_ref() {
+        Some(style_props) => {
+            let style = json_to_style(style_props);
+            commands.entity(entity).insert(style);
+
+            // BackgroundColor — insert or remove when cleared
+            match style_props.background_color.as_deref().and_then(parse_color) {
+                Some(color) => {
+                    commands.entity(entity).insert(BackgroundColor(color));
+                }
+                None => {
+                    commands.entity(entity).remove::<BackgroundColor>();
+                }
+            }
+
+            // BorderColor
+            match style_props.border_color.as_deref().and_then(parse_color) {
+                Some(color) => {
+                    commands.entity(entity).insert(BorderColor::all(color));
+                }
+                None => {
+                    commands.entity(entity).remove::<BorderColor>();
+                }
+            }
+
+            // BorderRadius
+            match style_props.border_radius.as_ref() {
+                Some(br) => {
+                    let val = parse_val(&br.0);
+                    commands.entity(entity).insert(BorderRadius::all(val));
+                }
+                None => {
+                    commands.entity(entity).remove::<BorderRadius>();
+                }
+            }
+
+            // ZIndex
+            match style_props.z_index {
+                Some(z) => {
+                    commands.entity(entity).insert(ZIndex(z));
+                }
+                None => {
+                    commands.entity(entity).remove::<ZIndex>();
+                }
+            }
+
+            // Visibility from display:none — remove override when cleared / not none
+            match style_props.display.as_deref() {
+                Some(d) if d.eq_ignore_ascii_case("none") => {
+                    commands.entity(entity).insert(Visibility::Hidden);
+                }
+                _ => {
+                    commands.entity(entity).remove::<Visibility>();
+                }
             }
         }
-        if let Some(ref bc) = style_props.border_color {
-            if let Some(color) = parse_color(bc) {
-                commands.entity(entity).insert(BorderColor::all(color));
-            }
-        }
-        if let Some(ref br) = style_props.border_radius {
-            let val = parse_val(&br.0);
-            commands.entity(entity).insert(BorderRadius::all(val));
-        }
-        if let Some(z) = style_props.z_index {
-            commands.entity(entity).insert(ZIndex(z));
-        }
-        // Update visibility based on display
-        match style_props.display.as_deref() {
-            Some(d) if d.eq_ignore_ascii_case("none") => {
-                commands.entity(entity).insert(Visibility::Hidden);
-            }
-            Some(_) => {
-                commands.entity(entity).insert(Visibility::Inherited);
-            }
-            None => {}
+        None => {
+            // Entire style prop cleared — drop optional visual overrides and reset layout
+            commands.entity(entity).insert(Node::default());
+            commands.entity(entity).remove::<BackgroundColor>();
+            commands.entity(entity).remove::<BorderColor>();
+            commands.entity(entity).remove::<BorderRadius>();
+            commands.entity(entity).remove::<ZIndex>();
+            commands.entity(entity).remove::<Visibility>();
         }
     }
 
     // Update image if provided
-    if let Some(image_path) = props.src.as_deref().or(props.image.as_deref()) {
+    if let Some(image_path) = props.src.clone().or(props.image.clone()) {
         let image_handle: Handle<Image> = asset_server.load(image_path);
         commands.entity(entity).insert(ImageNode::new(image_handle));
-    }
-
-    // Update text content if provided (for bevy-text nodes)
-    if let Some(ref content) = props.content {
-        commands.entity(entity).insert(Text::new(content.clone()));
-        log::info!("Updated text content: id={} content={}", node_id, content);
     }
 
     log::info!("Updated node: id={}", node_id);
@@ -462,13 +532,47 @@ fn handle_update_text(
     log::info!("Updated text: id={} content={}", node_id, content);
 }
 
-/// Destroy a node
-fn handle_destroy_node(commands: &mut Commands, context: &mut ReactContext, node_id: u64) {
-    if let Some(entity) = context.nodes.remove(&node_id) {
-        commands.entity(entity).despawn();
-        log::info!("Destroyed node: id={} entity={:?}", node_id, entity);
-    } else {
-        log::warn!("Failed to destroy node: id={} (not found)", node_id);
+/// Destroy a node and its descendants, purging ReactContext maps
+fn handle_destroy_node(
+    commands: &mut Commands,
+    context_entity: Entity,
+    context: &mut ReactContext,
+    node_id: u64,
+) {
+    let Some(entity) = context.nodes.remove(&node_id) else {
+        // Already destroyed (e.g. removeChild + detachDeletedInstance)
+        return;
+    };
+
+    // Purge descendant node_id mappings and recursively despawn the entity tree.
+    // Children relationships are only readable once commands are applied, so defer.
+    commands.queue(move |world: &mut World| {
+        let mut subtree = Vec::new();
+        collect_entity_subtree(world, entity, &mut subtree);
+
+        if let Some(mut ctx) = world.get_mut::<ReactContext>(context_entity) {
+            ctx.nodes.retain(|_, mapped| !subtree.contains(mapped));
+        }
+
+        if world.get_entity(entity).is_ok() {
+            world.entity_mut(entity).despawn();
+        }
+
+        log::info!(
+            "Destroyed node: id={} entity={:?} (subtree size={})",
+            node_id,
+            entity,
+            subtree.len()
+        );
+    });
+}
+
+fn collect_entity_subtree(world: &World, entity: Entity, out: &mut Vec<Entity>) {
+    out.push(entity);
+    if let Some(children) = world.get::<Children>(entity) {
+        for child in children.iter() {
+            collect_entity_subtree(world, child, out);
+        }
     }
 }
 
@@ -498,7 +602,7 @@ fn handle_insert_before(
                 let children: Vec<Entity> = world
                     .entity(parent)
                     .get::<Children>()
-                    .map(|c| c.into_iter().collect())
+                    .map(|c| c.iter().collect())
                     .unwrap_or_default();
 
                 let index = children

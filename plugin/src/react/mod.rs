@@ -40,6 +40,7 @@
 pub mod plugin;
 
 mod client;
+mod event_queue;
 mod native_functions;
 mod style;
 mod systems;
@@ -48,5 +49,6 @@ mod shim;
 
 pub use plugin::ReactPlugin;
 pub use client::*;
+pub use event_queue::{ReactEvent, ReactEventQueue};
 pub use systems::*;
 pub use vite::*;

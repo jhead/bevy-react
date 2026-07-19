@@ -1,5 +1,10 @@
 import Reconciler from "react-reconciler";
-import type { BevyInstance, BevyTextInstance } from "./types";
+import type {
+  BevyInstance,
+  BevyTextInstance,
+  KeyboardEventData,
+  PointerEventData,
+} from "./types";
 
 type Type = string;
 type Props = Record<string, unknown>;
@@ -9,6 +14,81 @@ type TextInstance = BevyTextInstance;
 type PublicInstance = Instance | TextInstance;
 type HostContext = Record<string, never>;
 type UpdatePayload = Props;
+
+/**
+ * Deep-compare values for update diffing.
+ * Functions are compared by presence only (serialized as boolean flags).
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a === "function" && typeof b === "function") return true;
+  if (typeof a !== typeof b) return false;
+  if (a === null || b === null) return a === b;
+  if (typeof a !== "object") return false;
+
+  const aObj = a as Record<string, unknown>;
+  const bObj = b as Record<string, unknown>;
+  const aKeys = Object.keys(aObj);
+  const bKeys = Object.keys(bObj);
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(bObj, key)) return false;
+    if (!deepEqual(aObj[key], bObj[key])) return false;
+  }
+  return true;
+}
+
+/**
+ * Build a props diff for host updates. Returns null when nothing serializable changed.
+ * Skips `children` (handled via text/content) and treats event handlers as presence flags.
+ */
+function diffProps(oldProps: Props, newProps: Props): UpdatePayload | null {
+  const diff: Props = {};
+  let changed = false;
+
+  for (const key of Object.keys(newProps)) {
+    if (key === "children") continue;
+    const next = newProps[key];
+    const prev = oldProps[key];
+    if (typeof next === "function") {
+      // Handler presence is what Rust cares about
+      if (typeof prev !== "function") {
+        diff[key] = next;
+        changed = true;
+      }
+      continue;
+    }
+    if (!deepEqual(prev, next)) {
+      diff[key] = next;
+      changed = true;
+    }
+  }
+
+  for (const key of Object.keys(oldProps)) {
+    if (key === "children") continue;
+    if (!(key in newProps)) {
+      // Prop removed — include as undefined so serialize/Rust can clear it
+      diff[key] = undefined;
+      changed = true;
+    }
+  }
+
+  // String children map to text content
+  const oldContent =
+    typeof oldProps.children === "string" ? oldProps.children : undefined;
+  const newContent =
+    typeof newProps.children === "string" ? newProps.children : undefined;
+  if (oldContent !== newContent) {
+    if (newContent !== undefined) {
+      diff.children = newContent;
+    } else {
+      diff.children = undefined;
+    }
+    changed = true;
+  }
+
+  return changed ? diff : null;
+}
 
 /**
  * Serialize props to JSON for the RPC call
@@ -21,7 +101,15 @@ function serializeProps(props: Props, type?: string): string {
     if (key === "children") {
       if (typeof value === "string") {
         serializable["content"] = value;
+      } else if (value === undefined) {
+        serializable["content"] = null;
       }
+      continue;
+    }
+
+    // Cleared props: send null so Rust can remove components
+    if (value === undefined) {
+      serializable[key] = null;
       continue;
     }
 
@@ -50,16 +138,18 @@ function log(...args: unknown[]): void {
 const instanceMap = new Map<number, PublicInstance>();
 
 /**
- * Event data passed from Rust for keyboard events
+ * Event payload from the host (keyboard, pointer, or absent).
  */
-interface KeyboardEventData {
-  key: string;
-}
+type HostEventData = KeyboardEventData | PointerEventData | null | undefined;
 
 /**
- * Global event dispatcher called from Rust
+ * Global event dispatcher called from Rust (via events.ts host bridge).
  */
-export function dispatchEvent(nodeId: number, event: string, data?: KeyboardEventData) {
+export function dispatchEvent(
+  nodeId: number,
+  event: string,
+  data?: HostEventData
+) {
   const instance = instanceMap.get(nodeId);
   if (!instance) {
     log("Dispatch event: instance not found", nodeId);
@@ -74,12 +164,28 @@ export function dispatchEvent(nodeId: number, event: string, data?: KeyboardEven
   }
 
   const props = instance.props;
+  const pointer = data as PointerEventData | undefined;
+  const keyboard = data as KeyboardEventData | undefined;
 
   switch (event) {
     case "click": {
       const onClick = props.onClick;
       if (typeof onClick === "function") {
-        onClick();
+        onClick(pointer);
+      }
+      break;
+    }
+    case "press": {
+      const onPress = props.onPress;
+      if (typeof onPress === "function") {
+        onPress(pointer);
+      }
+      break;
+    }
+    case "release": {
+      const onRelease = props.onRelease;
+      if (typeof onRelease === "function") {
+        onRelease(pointer);
       }
       break;
     }
@@ -99,26 +205,33 @@ export function dispatchEvent(nodeId: number, event: string, data?: KeyboardEven
     }
     case "keydown": {
       const onKeyDown = props.onKeyDown;
-      if (typeof onKeyDown === "function" && data) {
-        onKeyDown(data);
+      if (typeof onKeyDown === "function" && keyboard) {
+        onKeyDown(keyboard);
+      }
+      break;
+    }
+    case "keyup": {
+      const onKeyUp = props.onKeyUp;
+      if (typeof onKeyUp === "function" && keyboard) {
+        onKeyUp(keyboard);
       }
       break;
     }
     case "mouseenter": {
       const onHover = props.onHover;
       if (typeof onHover === "function") {
-        onHover();
+        onHover(pointer);
       }
       const onMouseEnter = props.onMouseEnter;
       if (typeof onMouseEnter === "function") {
-        onMouseEnter();
+        onMouseEnter(pointer);
       }
       break;
     }
     case "mouseleave": {
       const onMouseLeave = props.onMouseLeave;
       if (typeof onMouseLeave === "function") {
-        onMouseLeave();
+        onMouseLeave(pointer);
       }
       break;
     }
@@ -157,11 +270,12 @@ class BevyHostConfig {
   afterActiveInstanceBlur = () => {};
   prepareScopeUpdate = () => {};
   getInstanceFromScope = () => null;
-  detachDeletedInstance = (instance: Instance) => {
-      instanceMap.delete(instance.nodeId);
-      // Ideally we would also tell Rust to destroy the entity here?
-      // Or do we assume removeChild was enough?
-      // For now, let's at least clean up our map.
+  detachDeletedInstance = (instance: Instance | TextInstance) => {
+    instanceMap.delete(instance.nodeId);
+    // Host text nodes skip detachDeletedInstance in react-reconciler;
+    // host components land here. Destroy is also called from removeChild
+    // so this is safe if the entity was already despawned.
+    __react_destroy_node(this.props.rootId, instance.nodeId);
   };
 
   // -------------------
@@ -216,25 +330,14 @@ class BevyHostConfig {
   // Instance Updates
   // -------------------
 
+  // Kept for older reconciler typings; react-reconciler 0.32 diffs in commitUpdate.
   prepareUpdate = (
     _instance: Instance,
     _type: Type,
     oldProps: Props,
     newProps: Props
   ): UpdatePayload | null => {
-    for (const key in newProps) {
-      if (key === "children") continue;
-      if (oldProps[key] !== newProps[key]) {
-        return newProps;
-      }
-    }
-    for (const key in oldProps) {
-      if (key === "children") continue;
-      if (!(key in newProps)) {
-        return newProps;
-      }
-    }
-    return null;
+    return diffProps(oldProps, newProps);
   }
 
   commitUpdate = (
@@ -243,7 +346,24 @@ class BevyHostConfig {
     oldProps: Props,
     newProps: Props
   ): void => {
-    const propsJson = serializeProps(newProps, type);
+    // Diff in commit phase (prepareUpdate is unused in reconciler 0.32).
+    // Skip RPC when only function identity / identical style objects changed.
+    const payload = diffProps(oldProps, newProps);
+    if (payload === null) {
+      instance.props = newProps;
+      return;
+    }
+
+    // Send full next props (with cleared keys as null) so Rust can remove stale components.
+    // Merge: start from newProps, but ensure removed keys are present as undefined.
+    const toSend: Props = { ...newProps };
+    for (const key of Object.keys(payload)) {
+      if (!(key in newProps)) {
+        toSend[key] = undefined;
+      }
+    }
+
+    const propsJson = serializeProps(toSend, type);
     __react_update_node(this.props.rootId, instance.nodeId, propsJson);
     instance.props = newProps;
   }
@@ -286,6 +406,10 @@ class BevyHostConfig {
 
   removeChild = (parent: Instance, child: Instance | TextInstance): void => {
     __react_remove_child(this.props.rootId, parent.nodeId, child.nodeId);
+    // Despawn now: HostText never gets detachDeletedInstance, and destroying
+    // here also covers host components (detachDeletedInstance is then a no-op).
+    __react_destroy_node(this.props.rootId, child.nodeId);
+    instanceMap.delete(child.nodeId);
     if ("children" in parent) {
       const idx = parent.children.findIndex((c) => c.nodeId === child.nodeId);
       if (idx !== -1) {
@@ -299,6 +423,8 @@ class BevyHostConfig {
     child: Instance | TextInstance
   ): void => {
     __react_remove_child(this.props.rootId, container.rootId, child.nodeId);
+    __react_destroy_node(this.props.rootId, child.nodeId);
+    instanceMap.delete(child.nodeId);
   }
 
   insertBefore = (

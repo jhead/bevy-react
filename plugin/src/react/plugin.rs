@@ -6,6 +6,7 @@ use bevy::prelude::*;
 
 use crate::js_bevy::{JsClientResource, JsEngineExtensionComponent};
 use crate::react::ReactClient;
+use crate::react::event_queue::ReactEventQueue;
 use crate::react::native_functions::ReactJsExtension;
 use crate::react::systems::*;
 
@@ -17,6 +18,7 @@ impl Plugin for ReactPlugin {
 
         app.init_resource::<ReactRootMap>()
             .init_resource::<FocusedNode>()
+            .init_resource::<ReactEventQueue>()
             .add_systems(Startup, register_react_extension)
             .add_systems(Update, execute_react_scripts)
             .add_systems(
@@ -24,10 +26,11 @@ impl Plugin for ReactPlugin {
                 (
                     process_react_messages,
                     handle_input_interactions,
-                    handle_hover_events,
                     handle_keyboard_input,
+                    flush_react_events,
                     inspect,
-                ),
+                )
+                    .chain(),
             );
 
         log::info!("React plugin configured");
@@ -35,10 +38,10 @@ impl Plugin for ReactPlugin {
 }
 
 /// System to register the React extension with the JS engine
-fn register_react_extension(mut commands: Commands) {
+fn register_react_extension(mut commands: Commands, event_queue: Res<ReactEventQueue>) {
     let (client, receiver) = ReactClient::new();
-    
-    let react_ext = ReactJsExtension::new(client);
+
+    let react_ext = ReactJsExtension::new(client, event_queue.clone());
     commands.spawn(JsEngineExtensionComponent::new(react_ext));
     commands.insert_resource(ReactMessageReceiver(receiver));
 }

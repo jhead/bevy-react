@@ -45,7 +45,8 @@ impl JsEngineClient {
     /// Flush the JS event loop — called every Bevy frame by `tick_js_engine`.
     ///
     /// On native, signals the JS thread to run Boa's job queue.
-    /// On WASM, drains the command queue and runs all pending jobs synchronously.
+    /// On WASM, drains the command queue and runs a budgeted job pump (promises,
+    /// due timers, host futures) without blocking.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn flush_event_loop(&self) {
         if let Err(e) = self.sender.send(JsCommand::FlushEventLoop) {
@@ -132,7 +133,16 @@ impl JsEngineClient {
         {
             let _ = self.sender.send(JsCommand::Shutdown);
         }
-        // WASM: no dedicated thread to signal; dropping the engine is sufficient.
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Drop the context so in-flight job state cannot be polled again.
+            if let Ok(mut ctx_opt) = self.context.lock() {
+                *ctx_opt = None;
+            }
+            if let Ok(mut q) = self.queue.lock() {
+                q.clear();
+            }
+        }
     }
 }
 
@@ -183,16 +193,18 @@ mod wasm {
         }
     }
 
-    pub(super) fn flush_jobs(_context: &mut Context) {
-        // No-op on WASM.
-        //
-        // `Context::run_jobs()` calls `futures_lite::block_on(run_jobs_async())` which
-        // spins in a tight `park()`/`poll()` loop on wasm32 (the Parker has no way to
-        // truly block a single-threaded WASM runtime), causing the browser to kill the
-        // script with a "Script terminated by timeout" error.
-        //
-        // Game scripts are fully synchronous, so there are no promise jobs to flush.
-        // If async JS (fetch, setTimeout, etc.) is ever needed on WASM, replace this
-        // with a `wasm_bindgen_futures::spawn_local` approach.
+    pub(super) fn flush_jobs(context: &mut Context) {
+        // Uses FrameJobExecutor (installed in builder on wasm32): budgeted pump of
+        // ready promise/timeout/generic jobs plus a non-blocking poll of host
+        // futures. Must not call SimpleJobExecutor's block_on path — that busy-spins
+        // on wasm32 and the browser kills the script.
+        if let Err(e) = context.run_jobs() {
+            if let Some(e) = e.as_opaque() {
+                let msg = e.to_json(context).unwrap_or_default();
+                log::error!("Error running Boa jobs: {:?}", msg);
+            } else {
+                log::error!("Error running Boa jobs: {:?}", e);
+            }
+        }
     }
 }

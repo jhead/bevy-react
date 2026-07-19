@@ -20,7 +20,9 @@
   "author": "Justin Head",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "react": "^19.0.0",
@@ -30,7 +32,8 @@
     "@types/react": "^19.1.8",
     "@types/react-reconciler": "^0.28.9",
     "prettier": "^3.7.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   },
   "peerDependencies": {
     "react": "^19.0.0"

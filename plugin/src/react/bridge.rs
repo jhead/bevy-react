@@ -38,6 +38,95 @@ pub struct BridgeCallResult {
 
 type BridgeHandler = Arc<dyn Fn(&mut World, Value) -> Value + Send + Sync>;
 
+/// Metadata for one `ReactBridge::register` / `callNative` command.
+///
+/// Used by `bridge-codegen` to emit typed TypeScript wrappers. Prefer defining
+/// meta together with the handler via [`BridgeCommandSet`] or
+/// [`ReactBridge::register_typed`] so names cannot drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeCommandMeta {
+    /// Rust / JS command name passed to `register` / `callNative` (e.g. `"add_score"`).
+    pub name: &'static str,
+    /// TypeScript identifier for the wrapper function (e.g. `"addScore"`).
+    pub ts_fn: &'static str,
+    /// TypeScript type of the optional args payload (e.g. `"number"`, `"void"`).
+    pub args_ts: &'static str,
+    /// TypeScript type of the Promise result (e.g. `"{ score: number }"`).
+    pub result_ts: &'static str,
+}
+
+impl BridgeCommandMeta {
+    /// Construct command meta for codegen + [`ReactBridge::register_typed`].
+    pub const fn new(
+        name: &'static str,
+        ts_fn: &'static str,
+        args_ts: &'static str,
+        result_ts: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            ts_fn,
+            args_ts,
+            result_ts,
+        }
+    }
+}
+
+/// Collects command meta + handlers in one place for registration and codegen.
+///
+/// ```ignore
+/// let commands = BridgeCommandSet::new()
+///     .command(
+///         BridgeCommandMeta::new("add_score", "addScore", "number", "{ score: number }"),
+///         |world, args| { /* … */ serde_json::json!({ "score": 0 }) },
+///     );
+/// commands.apply(&bridge);
+/// // codegen: bundle.with_commands("commands.ts", commands.meta())
+/// ```
+pub struct BridgeCommandSet {
+    metas: Vec<BridgeCommandMeta>,
+    handlers: Vec<BridgeHandler>,
+}
+
+impl BridgeCommandSet {
+    pub fn new() -> Self {
+        Self {
+            metas: Vec::new(),
+            handlers: Vec::new(),
+        }
+    }
+
+    /// Append a command: TypeScript meta and the Bevy handler that implements it.
+    pub fn command<F>(mut self, meta: BridgeCommandMeta, handler: F) -> Self
+    where
+        F: Fn(&mut World, Value) -> Value + Send + Sync + 'static,
+    {
+        self.metas.push(meta);
+        self.handlers.push(Arc::new(handler));
+        self
+    }
+
+    /// Metadata slice for TypeScript codegen (`GeneratedBridgeTs::with_commands`
+    /// / freshness tests when the `bridge-codegen` feature is enabled).
+    pub fn meta(&self) -> &[BridgeCommandMeta] {
+        &self.metas
+    }
+
+    /// Register every command on `bridge` (idempotent replace per name).
+    pub fn apply(&self, bridge: &ReactBridge) {
+        for (meta, handler) in self.metas.iter().zip(&self.handlers) {
+            let handler = Arc::clone(handler);
+            bridge.register(meta.name, move |world, args| handler(world, args));
+        }
+    }
+}
+
+impl Default for BridgeCommandSet {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Type-erased snapshotter for a registered resource store.
 type StoreSnapshotter = Arc<dyn Fn(&World) -> Option<Value> + Send + Sync>;
 
@@ -229,6 +318,9 @@ impl ReactBridge {
     /// [`process_react_bridge_calls`] with exclusive [`World`] access.
     /// The returned [`Value`] is delivered to JS and resolves the matching
     /// `callNative` promise.
+    ///
+    /// When emitting TypeScript wrappers, prefer [`Self::register_typed`] or
+    /// [`BridgeCommandSet`] so command names stay tied to [`BridgeCommandMeta`].
     pub fn register<F>(&self, name: impl Into<String>, handler: F)
     where
         F: Fn(&mut World, Value) -> Value + Send + Sync + 'static,
@@ -237,6 +329,18 @@ impl ReactBridge {
         if let Ok(mut inner) = self.inner.lock() {
             inner.handlers.insert(name, Arc::new(handler));
         }
+    }
+
+    /// Register a handler using [`BridgeCommandMeta::name`].
+    ///
+    /// Co-locates codegen meta with the handler at the call site. For multiple
+    /// commands that also feed `bridge-codegen`, build a [`BridgeCommandSet`]
+    /// once and call [`BridgeCommandSet::apply`].
+    pub fn register_typed<F>(&self, meta: BridgeCommandMeta, handler: F)
+    where
+        F: Fn(&mut World, Value) -> Value + Send + Sync + 'static,
+    {
+        self.register(meta.name, handler);
     }
 
     /// Remove a previously registered handler.
@@ -717,6 +821,50 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, 42);
         assert_eq!(results[0].value, json!({ "score": 7 }));
+    }
+
+    #[test]
+    fn command_set_apply_registers_typed_handlers() {
+        let mut app = App::new();
+        app.init_resource::<ReactBridge>();
+
+        let commands = BridgeCommandSet::new().command(
+            BridgeCommandMeta::new("add", "add", "number", "{ score: number }"),
+            |world, args| {
+                let n = args.as_i64().unwrap_or(0);
+                let mut score = world.get_resource_or_insert_with(|| Score(0));
+                score.0 += n as i32;
+                json!({ "score": score.0 })
+            },
+        );
+        assert_eq!(commands.meta()[0].name, "add");
+        commands.apply(app.world().resource::<ReactBridge>());
+
+        app.world_mut()
+            .resource::<ReactBridge>()
+            .enqueue_call("add".into(), json!(3), Some(1));
+        process_react_bridge_calls(app.world_mut());
+        assert_eq!(app.world().resource::<Score>().0, 3);
+    }
+
+    #[test]
+    fn register_typed_uses_meta_name() {
+        let mut app = App::new();
+        app.init_resource::<ReactBridge>();
+        app.world_mut().resource::<ReactBridge>().register_typed(
+            BridgeCommandMeta::new("bump", "bump", "void", "{ score: number }"),
+            |world, _args| {
+                let mut score = world.get_resource_or_insert_with(|| Score(0));
+                score.0 += 1;
+                json!({ "score": score.0 })
+            },
+        );
+
+        app.world_mut()
+            .resource::<ReactBridge>()
+            .enqueue_call("bump".into(), Value::Null, Some(9));
+        process_react_bridge_calls(app.world_mut());
+        assert_eq!(app.world().resource::<Score>().0, 1);
     }
 
     #[test]

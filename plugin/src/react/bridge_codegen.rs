@@ -1,8 +1,8 @@
 //! TypeScript codegen helpers for the React bridge.
 //!
 //! Enabled with the `bridge-codegen` feature (`ts-rs`). Apps annotate
-//! serializable resources with `#[derive(ts_rs::TS)]`, list
-//! [`BridgeCommandMeta`] for registered `callNative` handlers, then call
+//! serializable resources with `#[derive(ts_rs::TS)]`, define commands with
+//! [`BridgeCommandSet`] / [`BridgeCommandMeta`], then call
 //! [`write_bridge_typescript`] (or assert with [`assert_bridge_typescript_fresh`]).
 //!
 //! See `docs/BRIDGE.md` and `scripts/generate-bridge-types.sh`.
@@ -12,18 +12,7 @@ use std::path::{Path, PathBuf};
 
 use ts_rs::{Config, TS};
 
-/// Metadata for one `ReactBridge::register` command, used to emit typed wrappers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BridgeCommandMeta {
-    /// Rust / JS command name passed to `register` / `callNative` (e.g. `"add_score"`).
-    pub name: &'static str,
-    /// TypeScript identifier for the wrapper function (e.g. `"addScore"`).
-    pub ts_fn: &'static str,
-    /// TypeScript type of the optional args payload (e.g. `"number"`, `"void"`).
-    pub args_ts: &'static str,
-    /// TypeScript type of the Promise result (e.g. `"{ score: number }"`).
-    pub result_ts: &'static str,
-}
+pub use super::bridge::{BridgeCommandMeta, BridgeCommandSet};
 
 /// Header prepended to every generated file.
 pub const GENERATED_HEADER: &str = "\
@@ -116,6 +105,15 @@ impl GeneratedBridgeTs {
     ) -> Self {
         self.push(relative, emit_command_wrappers(commands));
         self
+    }
+
+    /// Like [`with_commands`](Self::with_commands), taking meta from a [`BridgeCommandSet`].
+    pub fn with_command_set(
+        self,
+        relative: impl Into<String>,
+        commands: &BridgeCommandSet,
+    ) -> Self {
+        self.with_commands(relative, commands.meta())
     }
 
     pub fn with_keys(
@@ -236,18 +234,8 @@ mod tests {
     #[test]
     fn emit_command_wrappers_void_and_args() {
         let ts = emit_command_wrappers(&[
-            BridgeCommandMeta {
-                name: "add_score",
-                ts_fn: "addScore",
-                args_ts: "number",
-                result_ts: "{ score: number }",
-            },
-            BridgeCommandMeta {
-                name: "heal",
-                ts_fn: "heal",
-                args_ts: "void",
-                result_ts: "{ hp: number }",
-            },
+            BridgeCommandMeta::new("add_score", "addScore", "number", "{ score: number }"),
+            BridgeCommandMeta::new("heal", "heal", "void", "{ hp: number }"),
         ]);
         assert!(ts.contains("export function addScore(args: number)"));
         assert!(ts.contains("callNative<AddScoreResult>(\"add_score\", args)"));

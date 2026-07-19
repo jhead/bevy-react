@@ -13,7 +13,8 @@ ReactBridge::register_resource_store::<T>("hud")
 ReactBridge::register_query_store("enemies", …)
   + mark_query_dirty / each_frame
                                ──flush──► useQuery("enemies")
-ReactBridge::register("fn", …) ◄──call── callNative("fn", args) → Promise
+ReactBridge::register / register_typed / BridgeCommandSet
+                               ◄──call── callNative("fn", args) → Promise
 ```
 
 State delivery reuses the same host→JS flush pattern as the event queue: Bevy marks channels dirty, then `flush_react_bridge` runs `__react_flush_bridge()` on the JS thread (after syncing registered resource and query stores). JS→Rust calls enqueue on the JS thread, run on the Bevy main thread with `&mut World`, and return values resolve the matching JS promise on the next flush.
@@ -112,26 +113,39 @@ For cheap queries, use `register_query_store_each_frame` instead of manual dirty
 
 ## Rust: register JS-callable functions
 
-Handlers run inside `process_react_bridge_calls` (exclusive `World` access). **Return values are delivered to JS** and resolve the `callNative` Promise:
+Handlers run inside `process_react_bridge_calls` (exclusive `World` access). **Return values are delivered to JS** and resolve the `callNative` Promise.
+
+Prefer [`BridgeCommandSet`] (or `register_typed`) so command names stay tied to [`BridgeCommandMeta`] used for TypeScript codegen:
 
 ```rust
+use bevy_react::{BridgeCommandMeta, BridgeCommandSet, ReactBridge};
+
 fn setup_bridge(bridge: Res<ReactBridge>) {
     bridge.register_resource_store::<PlayerStats>("hud");
 
-    bridge.register("add_score", |world, args| {
-        let points = args.as_i64().unwrap_or(0) as u32;
-        let score = if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
-            stats.score = stats.score.saturating_add(points);
-            stats.score
-        } else {
-            0
-        };
-        // Resource-store sync will also flush the updated PlayerStats.
-        serde_json::json!({ "score": score })
-    });
+    BridgeCommandSet::new()
+        .command(
+            BridgeCommandMeta::new("add_score", "addScore", "number", "{ score: number }"),
+            |world, args| {
+                let points = args.as_i64().unwrap_or(0) as u32;
+                let score = if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
+                    stats.score = stats.score.saturating_add(points);
+                    stats.score
+                } else {
+                    0
+                };
+                // Resource-store sync will also flush the updated PlayerStats.
+                serde_json::json!({ "score": score })
+            },
+        )
+        .apply(&bridge);
+
+    // One-off without a set:
+    // bridge.register_typed(BridgeCommandMeta::new(…), |world, args| { … });
 }
 ```
 
+`bridge.register(name, handler)` remains available for ad-hoc handlers that are not codegen'd.
 ## TypeScript: subscribe and call
 
 ```tsx
@@ -209,9 +223,9 @@ Enabled with the plugin feature `bridge-codegen` (pulls in [`ts-rs`](https://doc
 ### HUD end-to-end
 
 1. Annotate a serializable resource with `Serialize` + `ts_rs::TS` (see `examples/hud/src/bridge_types.rs`).
-2. List registered commands as [`BridgeCommandMeta`] values (`name`, `ts_fn`, `args_ts`, `result_ts`).
-3. Build a [`GeneratedBridgeTs`] bundle and assert freshness in a unit test.
-4. Commit the output under `examples/hud/ui/src/generated/`. App helpers (`INITIAL_PLAYER_STATS`, `hpRatio`) stay in `hudTypes.ts` and re-export generated symbols.
+2. Define commands once with [`BridgeCommandSet`] — each `.command(BridgeCommandMeta::new(…), handler)` pairs TypeScript meta with the Bevy handler.
+3. At startup call `commands.apply(&bridge)` (HUD: `apply_hud_bridge`). For codegen, pass the same set via `GeneratedBridgeTs::with_command_set`.
+4. Assert freshness in a unit test and commit `examples/hud/ui/src/generated/`. App helpers (`INITIAL_PLAYER_STATS`, `hpRatio`) stay in `hudTypes.ts` and re-export generated symbols.
 
 ```bash
 # Rewrite generated files, then verify
@@ -228,34 +242,40 @@ Typed wrappers (`addScore`, `heal`) call `callNative` with the correct Promise r
 
 ```rust
 use bevy_react::{
-    BridgeCommandMeta, GeneratedBridgeTs, assert_bridge_typescript_fresh,
+    BridgeCommandMeta, BridgeCommandSet, GeneratedBridgeTs, assert_bridge_typescript_fresh,
 };
 
 #[derive(Serialize, ts_rs::TS)]
 struct MyState { /* … */ }
 
-const COMMANDS: &[BridgeCommandMeta] = &[
-    BridgeCommandMeta {
-        name: "do_thing",
-        ts_fn: "doThing",
-        args_ts: "{ id: number }",
-        result_ts: "{ ok: boolean }",
-    },
-];
+fn my_bridge_commands() -> BridgeCommandSet {
+    BridgeCommandSet::new().command(
+        BridgeCommandMeta::new("do_thing", "doThing", "{ id: number }", "{ ok: boolean }"),
+        |world, args| { /* … */ serde_json::json!({ "ok": true }) },
+    )
+}
+
+fn setup_bridge(bridge: Res<ReactBridge>) {
+    my_bridge_commands().apply(&bridge);
+}
 
 #[test]
 fn generated_bridge_typescript_is_fresh() {
     let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/src/generated");
     let bundle = GeneratedBridgeTs::new()
         .with_type::<MyState>("MyState.ts")
-        .with_commands("commands.ts", COMMANDS)
+        .with_command_set("commands.ts", &my_bridge_commands())
         .with_barrel("index.ts", &["MyState.ts", "commands.ts"]);
     // UPDATE_BRIDGE_TYPES=1 rewrites; otherwise asserts equality.
     assert_bridge_typescript_fresh(&out, &bundle);
 }
 ```
 
-Enable `bevy_react` with `features = ["bridge-codegen"]` and add `ts-rs` to the app crate. Keep command metadata next to the `bridge.register(…)` call sites so names cannot drift unnoticed.
+Enable `bevy_react` with `features = ["bridge-codegen"]` and add `ts-rs` to the app crate. Args/result TypeScript strings in [`BridgeCommandMeta`] are still written by hand (closure signatures are not reflected); the set API only removes the second copy of the command name between `register` and the meta table.
+
+### Shared package types (future)
+
+When more than one UI package needs the same generated shapes, a light next step is a small workspace package (e.g. `packages/bridge-types`) that re-exports committed `generated/` output, or a `ts-rs` export dir shared by apps — without moving codegen into the `bevy-react` npm package itself. HUD can stay the reference consumer until then.
 
 Shape tests remain: Rust serde keys in `bridge_types` tests, plus the Vitest key contract in `packages/bevy-react/tests/bridge.test.ts`.
 
@@ -270,8 +290,8 @@ Shape tests remain: Rust serde keys in `bridge_types` tests, plus the Vitest key
 | `useResource` / selector `useBridgeState` | Done |
 | `useQuery` | Done |
 | `ts-rs` codegen + typed command wrappers (HUD) | Done |
-| Auto-derive command meta from `register` closures | TODO |
-
+| Unified `BridgeCommandSet` / `register_typed` (meta + handler) | Done |
+| Shared package types beyond HUD | TODO |
 ## Notes
 
 - Do not break or bypass the existing `ReactEventQueue` path; the bridge is a separate channel for app data, not UI events.

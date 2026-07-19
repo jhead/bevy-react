@@ -65,13 +65,13 @@ pub use devtools::{ReactDevToolsBridge, ReactDevToolsPlugin, DEVTOOLS_WS_ADDR, D
 pub use devtools::ReactNodeInspectorPlugin;
 pub use asset_source::{ReactAssetBundle, ReactAssetSource, ReactJsModule};
 pub use bridge::{
-    BridgeCall, BridgeCallResult, ReactBridge, flush_react_bridge,
-    process_react_bridge_calls, sync_registered_query_stores,
+    BridgeCall, BridgeCallResult, BridgeCommandMeta, BridgeCommandSet, ReactBridge,
+    flush_react_bridge, process_react_bridge_calls, sync_registered_query_stores,
     sync_registered_resource_stores,
 };
 #[cfg(feature = "bridge-codegen")]
 pub use bridge_codegen::{
-    BridgeCommandMeta, GeneratedBridgeTs, assert_bridge_typescript_fresh, default_hud_generated_dir,
+    GeneratedBridgeTs, assert_bridge_typescript_fresh, default_hud_generated_dir,
     emit_command_wrappers, emit_object_keys_const, emit_type_decl, sync_bridge_typescript,
     write_bridge_typescript,
 };

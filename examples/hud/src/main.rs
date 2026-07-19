@@ -17,7 +17,7 @@ use bevy_react::{
 mod auto_screenshot;
 mod bridge_types;
 
-use bridge_types::PlayerStats;
+use bridge_types::{PlayerStats, apply_hud_bridge};
 
 fn main() {
     App::new()
@@ -69,28 +69,7 @@ fn setup_ui(mut commands: Commands) {
 }
 
 fn setup_bridge(bridge: Res<ReactBridge>) {
-    bridge.register_resource_store::<PlayerStats>("hud");
-
-    bridge.register("add_score", |world, args| {
-        let points = args.as_i64().unwrap_or(10) as u32;
-        let score = if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
-            stats.score = stats.score.saturating_add(points);
-            stats.score
-        } else {
-            0
-        };
-        serde_json::json!({ "score": score })
-    });
-
-    bridge.register("heal", |world, _args| {
-        let hp = if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
-            stats.hp = (stats.hp + 15).min(stats.max_hp);
-            stats.hp
-        } else {
-            0
-        };
-        serde_json::json!({ "hp": hp })
-    });
+    apply_hud_bridge(&bridge);
 }
 
 fn tick_player(time: Res<Time>, mut stats: ResMut<PlayerStats>) {

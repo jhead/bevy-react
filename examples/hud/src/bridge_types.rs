@@ -1,10 +1,12 @@
 //! Bridge TypeScript codegen for the HUD example.
 //!
 //! Kept separate from `main.rs` so `cargo test` can export without launching Bevy.
+//! Commands are defined once via [`BridgeCommandSet`] (meta + handlers together).
 
 use bevy::prelude::*;
 use bevy_react::{
-    BridgeCommandMeta, GeneratedBridgeTs, assert_bridge_typescript_fresh,
+    BridgeCommandMeta, BridgeCommandSet, GeneratedBridgeTs, ReactBridge,
+    assert_bridge_typescript_fresh,
 };
 use serde::Serialize;
 use ts_rs::TS;
@@ -21,21 +23,46 @@ pub struct PlayerStats {
     pub score: u32,
 }
 
-/// Commands registered in `setup_bridge` — keep names in sync with `main.rs`.
-pub const HUD_COMMANDS: &[BridgeCommandMeta] = &[
-    BridgeCommandMeta {
-        name: "add_score",
-        ts_fn: "addScore",
-        args_ts: "number",
-        result_ts: "{ score: number }",
-    },
-    BridgeCommandMeta {
-        name: "heal",
-        ts_fn: "heal",
-        args_ts: "void",
-        result_ts: "{ hp: number }",
-    },
-];
+/// Commands for the HUD bridge: TypeScript meta and Bevy handlers in one place.
+pub fn hud_bridge_commands() -> BridgeCommandSet {
+    BridgeCommandSet::new()
+        .command(
+            BridgeCommandMeta::new(
+                "add_score",
+                "addScore",
+                "number",
+                "{ score: number }",
+            ),
+            |world, args| {
+                let points = args.as_i64().unwrap_or(10) as u32;
+                let score = if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
+                    stats.score = stats.score.saturating_add(points);
+                    stats.score
+                } else {
+                    0
+                };
+                serde_json::json!({ "score": score })
+            },
+        )
+        .command(
+            BridgeCommandMeta::new("heal", "heal", "void", "{ hp: number }"),
+            |world, _args| {
+                let hp = if let Some(mut stats) = world.get_resource_mut::<PlayerStats>() {
+                    stats.hp = (stats.hp + 15).min(stats.max_hp);
+                    stats.hp
+                } else {
+                    0
+                };
+                serde_json::json!({ "hp": hp })
+            },
+        )
+}
+
+/// Register resource store + HUD commands on the bridge.
+pub fn apply_hud_bridge(bridge: &ReactBridge) {
+    bridge.register_resource_store::<PlayerStats>("hud");
+    hud_bridge_commands().apply(bridge);
+}
 
 /// Serde / JSON object keys for `PlayerStats` (field declaration order).
 pub const PLAYER_STATS_KEYS: &[&str] = &["hp", "max_hp", "score"];
@@ -48,7 +75,7 @@ pub fn hud_bridge_ts_bundle() -> GeneratedBridgeTs {
     GeneratedBridgeTs::new()
         .with_type::<PlayerStats>("PlayerStats.ts")
         .with_keys("PlayerStatsKeys.ts", "PLAYER_STATS_KEYS", PLAYER_STATS_KEYS)
-        .with_commands("commands.ts", HUD_COMMANDS)
+        .with_command_set("commands.ts", &hud_bridge_commands())
         .with_barrel(
             "index.ts",
             &["PlayerStats.ts", "PlayerStatsKeys.ts", "commands.ts"],
@@ -80,5 +107,15 @@ mod tests {
     #[test]
     fn generated_bridge_typescript_is_fresh() {
         assert_bridge_typescript_fresh(&hud_generated_dir(), &hud_bridge_ts_bundle());
+    }
+
+    #[test]
+    fn hud_commands_meta_matches_wrappers() {
+        let commands = hud_bridge_commands();
+        let meta = commands.meta();
+        assert_eq!(meta.len(), 2);
+        assert_eq!(meta[0].name, "add_score");
+        assert_eq!(meta[0].ts_fn, "addScore");
+        assert_eq!(meta[1].name, "heal");
     }
 }

@@ -3,8 +3,8 @@ use bevy::text::TextLayout;
 
 use crate::react::client::ReactClientProto;
 use crate::react::style::{
-    json_to_style, parse_color, parse_font_family, parse_line_height, parse_props, parse_text_align,
-    parse_val, style_object_fit, style_opacity, style_tint, style_to_background_gradient,
+    json_to_style, parse_color, parse_props, parse_val, style_font_family, style_line_height,
+    style_object_fit, style_opacity, style_text_align, style_tint, style_to_background_gradient,
     style_to_border_color, style_to_border_radius, style_to_box_shadow, StyleProps,
 };
 use crate::react::systems::types::*;
@@ -703,15 +703,11 @@ fn apply_text_style(
         text_font.font_size = px;
         has_font = true;
     }
-    if let Some(ref family) = style_props.font_family
-        && let Some(path) = parse_font_family(family)
-    {
+    if let Some(path) = style_font_family(style_props) {
         text_font.font = asset_server.load(path);
         has_font = true;
     }
-    if let Some(ref line_height) = style_props.line_height
-        && let Some(lh) = parse_line_height(&line_height.0)
-    {
+    if let Some(lh) = style_line_height(style_props) {
         text_font.line_height = lh;
         has_font = true;
     }
@@ -719,9 +715,7 @@ fn apply_text_style(
         cmd.insert(text_font);
     }
 
-    if let Some(ref align) = style_props.text_align
-        && let Some(justify) = parse_text_align(align)
-    {
+    if let Some(justify) = style_text_align(style_props) {
         cmd.insert(TextLayout::new_with_justify(justify));
     }
 }
@@ -752,15 +746,11 @@ fn apply_text_style_commands(
         text_font.font_size = px;
         has_font = true;
     }
-    if let Some(family) = style_props.font_family.as_ref()
-        && let Some(path) = parse_font_family(family)
-    {
+    if let Some(path) = style_font_family(style_props) {
         text_font.font = asset_server.load(path);
         has_font = true;
     }
-    if let Some(line_height) = style_props.line_height.as_ref()
-        && let Some(lh) = parse_line_height(&line_height.0)
-    {
+    if let Some(lh) = style_line_height(style_props) {
         text_font.line_height = lh;
         has_font = true;
     }
@@ -770,7 +760,7 @@ fn apply_text_style_commands(
         commands.entity(entity).remove::<TextFont>();
     }
 
-    match style_props.text_align.as_deref().and_then(parse_text_align) {
+    match style_text_align(style_props) {
         Some(justify) => {
             commands
                 .entity(entity)

@@ -43,9 +43,19 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return true;
 }
 
+/** Coerce React text children (string | number | boolean) to a content string. */
+function textChildContent(children: unknown): string | undefined {
+  if (typeof children === "string") return children;
+  if (typeof children === "number" || typeof children === "boolean") {
+    return String(children);
+  }
+  return undefined;
+}
+
 /**
  * Build a props diff for host updates. Returns null when nothing serializable changed.
- * Skips `children` (handled via text/content) and treats event handlers as presence flags.
+ * Skips structural `children` (host children) but tracks text content for bevy-text.
+ * Treats event handlers as presence flags.
  */
 function diffProps(oldProps: Props, newProps: Props): UpdatePayload | null {
   const diff: Props = {};
@@ -78,11 +88,9 @@ function diffProps(oldProps: Props, newProps: Props): UpdatePayload | null {
     }
   }
 
-  // String children map to text content
-  const oldContent =
-    typeof oldProps.children === "string" ? oldProps.children : undefined;
-  const newContent =
-    typeof newProps.children === "string" ? newProps.children : undefined;
+  // String/number/boolean children map to text content (fixes frozen `{value}` HUD clocks).
+  const oldContent = textChildContent(oldProps.children);
+  const newContent = textChildContent(newProps.children);
   if (oldContent !== newContent) {
     if (newContent !== undefined) {
       diff.children = newContent;
@@ -104,9 +112,10 @@ function serializeProps(props: Props, type?: string): string {
   for (const [key, value] of Object.entries(props)) {
     // For text elements, include children as the text content
     if (key === "children") {
-      if (typeof value === "string") {
-        serializable["content"] = value;
-      } else if (value === undefined) {
+      const content = textChildContent(value);
+      if (content !== undefined) {
+        serializable["content"] = content;
+      } else if (value === undefined || value === null) {
         serializable["content"] = null;
       }
       continue;
@@ -550,8 +559,11 @@ class BevyHostConfig {
     __react_insert_before(this.props.rootId, container.rootId, child.nodeId, beforeChild.nodeId);
   }
 
-  clearContainer = (container: Container): void => {
-    __react_clear_container(this.props.rootId);
+  clearContainer = (_container: Container): void => {
+    // Concurrent roots call clearContainer AFTER creating the new tree and
+    // BEFORE appendChildToContainer. Despawning here wiped every consumer's
+    // first paint (Create → Append → Clear → root append fails). Removals go
+    // through removeChild / removeChildFromContainer instead.
   }
 
   // -------------------
@@ -579,7 +591,13 @@ class BevyHostConfig {
   // -------------------
 
   shouldSetTextContent(_type: Type, props: Props): boolean {
-    return typeof props.children === "string";
+    // Match React Native: numbers/booleans are text content, not HostText children.
+    const children = props.children;
+    return (
+      typeof children === "string" ||
+      typeof children === "number" ||
+      typeof children === "boolean"
+    );
   }
 
   getPublicInstance(instance: Instance | TextInstance): PublicInstance {

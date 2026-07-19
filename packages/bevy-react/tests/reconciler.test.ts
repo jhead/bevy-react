@@ -78,13 +78,15 @@ describe("reconciler host config RPC sequences", () => {
     );
 
     const ops = mock.ops();
+    // Concurrent root used to emit clear_container mid-mount (which despawned the
+    // tree). clearContainer is now a no-op host method — no RPC.
     expect(ops).toEqual([
       "create_node",
       "create_node",
       "append_child",
-      "clear_container",
       "append_child",
     ]);
+    expect(ops).not.toContain("clear_container");
 
     const createCalls = mock.calls.filter((c) => c.op === "create_node");
     expect(createCalls).toHaveLength(2);
@@ -228,6 +230,32 @@ describe("reconciler host config RPC sequences", () => {
       };
       expect(props.content).toBe("two");
       expect(mock.calls[0].nodeId).toBe(created.nodeId);
+    }
+  });
+
+  it("updates numeric text children (HUD clock shape)", () => {
+    const { render } = createRenderer(mock);
+    render(React.createElement("bevy-text", { children: 1444 }));
+
+    const created = mock.calls.find(
+      (c) => c.op === "create_node" && c.type === "bevy-text"
+    );
+    expect(created).toBeDefined();
+    if (!created || created.op !== "create_node") {
+      throw new Error("expected create_node");
+    }
+    const initial = JSON.parse(created.propsJson) as { content?: string };
+    expect(initial.content).toBe("1444");
+
+    mock.reset();
+    render(React.createElement("bevy-text", { children: 1445 }));
+
+    expect(mock.ops()).toEqual(["update_node"]);
+    if (mock.calls[0].op === "update_node") {
+      const props = JSON.parse(mock.calls[0].propsJson) as {
+        content?: string;
+      };
+      expect(props.content).toBe("1445");
     }
   });
 

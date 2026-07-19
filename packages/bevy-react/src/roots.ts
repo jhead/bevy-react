@@ -62,7 +62,13 @@ export function ensureRoot(rootId: string): BevyRootState {
     false, // isStrictMode
     null, // concurrentUpdatesByDefaultOverride
     "", // identifierPrefix
-    () => {}, // onRecoverableError
+    (error) => {
+      // Loud by default — silent recoverable errors made blank screens undebugable.
+      console.error("[bevy-react] Recoverable render error:", error);
+      if (error && typeof error === "object" && "stack" in error) {
+        console.error((error as { stack?: string }).stack);
+      }
+    },
     null // transitionCallbacks
   );
 

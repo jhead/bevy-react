@@ -1,8 +1,9 @@
 /**
  * Rust ↔ React data bridge.
  *
- * Host pushes named JSON channels via `ReactBridge::publish` / resource stores;
- * JS subscribes with `subscribeBridge` / `useBridgeState` / `useResource`.
+ * Host pushes named JSON channels via `ReactBridge::publish` / resource stores /
+ * query stores; JS subscribes with `subscribeBridge` / `useBridgeState` /
+ * `useResource` / `useQuery`.
  * JS invokes registered Rust handlers with `callNative(name, args)` (Promise).
  *
  * Call `installBridgeDispatcher()` once (from `createBevyApp`) so state flushes
@@ -205,3 +206,11 @@ export function useBridgeState<T, S = T>(
  * Alias of {@link useBridgeState} for the `register_resource_store` path.
  */
 export const useResource: typeof useBridgeState = useBridgeState;
+
+/**
+ * Subscribe to an ECS query store published under `key`.
+ *
+ * Alias of {@link useBridgeState} for the `register_query_store` /
+ * `register_query_store_each_frame` path.
+ */
+export const useQuery: typeof useBridgeState = useBridgeState;

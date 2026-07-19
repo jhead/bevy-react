@@ -41,6 +41,7 @@ export {
   installBridgeDispatcher,
   subscribeBridge,
   useBridgeState,
+  useQuery,
   useResource,
 } from "./bridge";
 

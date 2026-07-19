@@ -3,7 +3,9 @@
 //! Two directions:
 //! - **ECS → React:** [`ReactBridge::publish`] pushes JSON on a named channel;
 //!   [`ReactBridge::register_resource_store`] snapshots a [`Resource`] when it
-//!   changes. A Bevy system flushes dirty channels into JS via `__react_flush_bridge`.
+//!   changes; [`ReactBridge::register_query_store`] runs a user closure when
+//!   dirty (or each frame). A Bevy system flushes dirty channels into JS via
+//!   `__react_flush_bridge`.
 //! - **JS → Rust:** JS calls `__react_call(name, argsJson, callId)`; handlers
 //!   registered with [`ReactBridge::register`] run on the Bevy main thread with
 //!   `&mut World`. Return values resolve the matching JS promise.
@@ -39,9 +41,19 @@ type BridgeHandler = Arc<dyn Fn(&mut World, Value) -> Value + Send + Sync>;
 /// Type-erased snapshotter for a registered resource store.
 type StoreSnapshotter = Arc<dyn Fn(&World) -> Option<Value> + Send + Sync>;
 
+/// Type-erased query snapshotter (`&mut World` so closures can run queries).
+type QuerySnapshotter = Arc<dyn Fn(&mut World) -> Value + Send + Sync>;
+
 struct ResourceStoreEntry {
     channel: String,
     try_snapshot: StoreSnapshotter,
+}
+
+struct QueryStoreEntry {
+    channel: String,
+    snapshot: QuerySnapshotter,
+    /// When true, the snapshotter runs every flush (skip publish if unchanged).
+    each_frame: bool,
 }
 
 #[derive(Default)]
@@ -50,6 +62,8 @@ struct ReactBridgeInner {
     state: HashMap<String, Value>,
     /// Channels changed since the last flush to JS.
     dirty: HashSet<String>,
+    /// Query-store channels that should snapshot on the next sync.
+    query_dirty: HashSet<String>,
     /// Queued `__react_call` invocations.
     calls: VecDeque<BridgeCall>,
     /// Completed call results waiting for the next JS flush.
@@ -58,6 +72,8 @@ struct ReactBridgeInner {
     handlers: HashMap<String, BridgeHandler>,
     /// ECS-backed stores flushed by [`sync_registered_resource_stores`].
     resource_stores: Vec<ResourceStoreEntry>,
+    /// Query-backed stores flushed by [`sync_registered_query_stores`].
+    query_stores: Vec<QueryStoreEntry>,
     /// Monotonic id for JS→Rust calls (used when JS omits an id).
     next_call_id: u64,
 }
@@ -144,6 +160,66 @@ impl ReactBridge {
             inner
                 .resource_stores
                 .retain(|entry| entry.channel != channel);
+        }
+    }
+
+    /// Register a named query store.
+    ///
+    /// The closure runs when the channel is dirty ([`mark_query_dirty`]) or has
+    /// never been published, then feeds the existing publish / flush path.
+    /// Prefer marking dirty from a system that observes `Changed` / `Added`
+    /// (and removals) rather than serializing every frame.
+    ///
+    /// For cheap queries, use [`register_query_store_each_frame`](Self::register_query_store_each_frame).
+    pub fn register_query_store<F>(&self, channel: impl Into<String>, query_fn: F)
+    where
+        F: Fn(&mut World) -> Value + Send + Sync + 'static,
+    {
+        self.insert_query_store(channel.into(), false, query_fn);
+    }
+
+    /// Like [`register_query_store`](Self::register_query_store), but snapshots
+    /// every flush. Unchanged JSON is not republished.
+    pub fn register_query_store_each_frame<F>(&self, channel: impl Into<String>, query_fn: F)
+    where
+        F: Fn(&mut World) -> Value + Send + Sync + 'static,
+    {
+        self.insert_query_store(channel.into(), true, query_fn);
+    }
+
+    fn insert_query_store<F>(&self, channel: String, each_frame: bool, query_fn: F)
+    where
+        F: Fn(&mut World) -> Value + Send + Sync + 'static,
+    {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner
+                .query_stores
+                .retain(|entry| entry.channel != channel);
+            inner.query_dirty.insert(channel.clone());
+            inner.query_stores.push(QueryStoreEntry {
+                channel,
+                snapshot: Arc::new(query_fn),
+                each_frame,
+            });
+        }
+    }
+
+    /// Mark a query store dirty so the next flush re-runs its snapshotter.
+    pub fn mark_query_dirty(&self, channel: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            if inner.query_stores.iter().any(|e| e.channel == channel) {
+                inner.query_dirty.insert(channel.to_string());
+            }
+        }
+    }
+
+    /// Remove a query store registration (does not clear channel state).
+    pub fn unregister_query_store(&self, channel: &str) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner
+                .query_stores
+                .retain(|entry| entry.channel != channel);
+            inner.query_dirty.remove(channel);
         }
     }
 
@@ -251,6 +327,45 @@ impl ReactBridge {
             .collect()
     }
 
+    /// Snapshot of query stores that should run this frame, plus whether each
+    /// is `each_frame`. Consumes matching `query_dirty` entries.
+    fn take_query_stores_to_sync(&self) -> Vec<(String, QuerySnapshotter, bool)> {
+        let Ok(mut inner) = self.inner.lock() else {
+            return Vec::new();
+        };
+
+        let mut out = Vec::new();
+        for entry in &inner.query_stores {
+            let missing = !inner.state.contains_key(&entry.channel);
+            let marked = inner.query_dirty.contains(&entry.channel);
+            if entry.each_frame || missing || marked {
+                out.push((
+                    entry.channel.clone(),
+                    Arc::clone(&entry.snapshot),
+                    entry.each_frame,
+                ));
+            }
+        }
+        for (channel, _, _) in &out {
+            inner.query_dirty.remove(channel);
+        }
+        out
+    }
+
+    /// Publish only when the value differs from the current channel snapshot.
+    fn publish_if_changed(&self, channel: String, value: Value) {
+        if let Ok(mut inner) = self.inner.lock() {
+            let changed = match inner.state.get(&channel) {
+                Some(prev) => prev != &value,
+                None => true,
+            };
+            if changed {
+                inner.state.insert(channel.clone(), value);
+                inner.dirty.insert(channel);
+            }
+        }
+    }
+
     fn drain_calls_and_handlers(&self) -> (Vec<BridgeCall>, HashMap<String, BridgeHandler>) {
         let Ok(mut inner) = self.inner.lock() else {
             return (Vec::new(), HashMap::new());
@@ -282,6 +397,26 @@ pub fn sync_registered_resource_stores(world: &mut World) {
         if let Some(value) = try_snapshot(world) {
             bridge.publish(channel, value);
         }
+    }
+}
+
+/// Snapshot registered query stores into the publish/dirty path.
+///
+/// Runs closures marked via [`ReactBridge::mark_query_dirty`], never-published
+/// stores, and `each_frame` stores. Unchanged JSON is not republished.
+pub fn sync_registered_query_stores(world: &mut World) {
+    let Some(bridge) = world.get_resource::<ReactBridge>().cloned() else {
+        return;
+    };
+
+    let stores = bridge.take_query_stores_to_sync();
+    if stores.is_empty() {
+        return;
+    }
+
+    for (channel, snapshot, _each_frame) in stores {
+        let value = snapshot(world);
+        bridge.publish_if_changed(channel, value);
     }
 }
 
@@ -321,6 +456,7 @@ pub fn process_react_bridge_calls(world: &mut World) {
 /// Push dirty channel snapshots and call results into JS via `__react_flush_bridge`.
 pub fn flush_react_bridge(world: &mut World) {
     sync_registered_resource_stores(world);
+    sync_registered_query_stores(world);
 
     let Some(bridge) = world.get_resource::<ReactBridge>().cloned() else {
         return;
@@ -634,6 +770,78 @@ mod tests {
         );
     }
 
+    #[test]
+    fn query_store_publishes_when_dirty() {
+        let mut app = App::new();
+        app.init_resource::<ReactBridge>();
+        app.insert_resource(EnemyCount(2));
+        app.add_systems(Update, sync_registered_query_stores);
+
+        app.world_mut()
+            .resource::<ReactBridge>()
+            .register_query_store("enemies", |world| {
+                let count = world
+                    .get_resource::<EnemyCount>()
+                    .map(|c| c.0)
+                    .unwrap_or(0);
+                json!({ "count": count })
+            });
+
+        // Registration marks dirty → first sync publishes.
+        app.update();
+        assert_eq!(
+            app.world().resource::<ReactBridge>().get_state("enemies"),
+            Some(json!({ "count": 2 }))
+        );
+        let _ = app.world().resource::<ReactBridge>().drain_state_updates();
+
+        // No mark → no republish.
+        app.update();
+        assert!(!app.world().resource::<ReactBridge>().has_pending_state());
+
+        // Change without mark → still no republish (dirty-driven).
+        app.world_mut().resource_mut::<EnemyCount>().0 = 5;
+        app.update();
+        assert!(!app.world().resource::<ReactBridge>().has_pending_state());
+
+        // mark_query_dirty → snapshot + publish.
+        app.world_mut()
+            .resource::<ReactBridge>()
+            .mark_query_dirty("enemies");
+        app.update();
+        let updates = app.world().resource::<ReactBridge>().drain_state_updates();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].1, json!({ "count": 5 }));
+
+        // each_frame store skips publish when value unchanged.
+        app.world_mut()
+            .resource::<ReactBridge>()
+            .register_query_store_each_frame("enemies_live", |world| {
+                let count = world
+                    .get_resource::<EnemyCount>()
+                    .map(|c| c.0)
+                    .unwrap_or(0);
+                json!({ "count": count })
+            });
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<ReactBridge>()
+                .get_state("enemies_live"),
+            Some(json!({ "count": 5 }))
+        );
+        let _ = app.world().resource::<ReactBridge>().drain_state_updates();
+        app.update();
+        assert!(!app.world().resource::<ReactBridge>().has_pending_state());
+
+        app.world_mut().resource_mut::<EnemyCount>().0 = 9;
+        app.update();
+        let live = app.world().resource::<ReactBridge>().drain_state_updates();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].0, "enemies_live");
+        assert_eq!(live[0].1, json!({ "count": 9 }));
+    }
+
     /// Hand-written TS parallel type contract: keys must stay in sync with
     /// `examples/hud/ui/src/hudTypes.ts` (see docs/BRIDGE.md codegen notes).
     #[test]
@@ -654,6 +862,9 @@ mod tests {
 
     #[derive(Resource)]
     struct Score(i32);
+
+    #[derive(Resource)]
+    struct EnemyCount(u32);
 
     #[derive(Resource, Clone, Serialize)]
     struct PlayerStats {

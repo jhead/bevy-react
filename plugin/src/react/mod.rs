@@ -63,7 +63,8 @@ pub use devtools::ReactNodeInspectorPlugin;
 pub use asset_source::{ReactAssetBundle, ReactAssetSource, ReactJsModule};
 pub use bridge::{
     BridgeCall, BridgeCallResult, ReactBridge, flush_react_bridge,
-    process_react_bridge_calls, sync_registered_resource_stores,
+    process_react_bridge_calls, sync_registered_query_stores,
+    sync_registered_resource_stores,
 };
 pub use client::*;
 pub use components_registry::{

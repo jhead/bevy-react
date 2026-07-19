@@ -11,6 +11,7 @@ import {
   subscribeBridge,
   useBridgeState,
   useResource,
+  useQuery,
 } from "../src/bridge";
 
 describe("bridge", () => {
@@ -71,6 +72,10 @@ describe("bridge", () => {
 
   it("exports useResource as a useBridgeState alias", () => {
     expect(useResource).toBe(useBridgeState);
+  });
+
+  it("exports useQuery as a useBridgeState alias", () => {
+    expect(useQuery).toBe(useBridgeState);
   });
 
   it("installBridgeDispatcher wires host callbacks", () => {

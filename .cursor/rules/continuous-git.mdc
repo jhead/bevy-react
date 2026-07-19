@@ -1,0 +1,30 @@
+---
+description: Continuously commit and push granular work; instruct subagents the same
+alwaysApply: true
+---
+
+# Continuous commit and push
+
+Do not wait to be asked to commit or push. Parent agents and Task subagents both follow this.
+
+## When
+
+After a coherent, verified unit of work (owned builds/tests pass), commit immediately, then push to the tracked remote.
+
+## How
+
+- One concern per commit; short human-friendly messages (why, not file lists); HEREDOC `git commit -m`.
+- `git push` (or `-u` when first publishing the branch). Never force-push `main`/`master`.
+- Keep normal git safety: no config changes, no hook skips, no secrets, amend only under standard amend conditions.
+
+## Subagents
+
+When launching Task/subagents, include explicit instructions to:
+
+1. Commit their completed owned files with granular messages.
+2. Push to the current branch on the shared repo (no worktrees/PRs unless separately requested).
+3. Stay within assigned file ownership so parallel agents do not clobber each other.
+
+## Parallel work on one branch
+
+Prefer disjoint file ownership. If conflicts appear, finish and commit one agent’s scope before the next touches shared files.

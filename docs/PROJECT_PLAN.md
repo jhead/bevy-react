@@ -43,7 +43,7 @@ Remaining gaps: style coverage still missing text shadow / line-break and image 
 
 ## Epic 4: Built-in components
 
-- [ ] Real `TextInput`: cursor position/blinking, selection, clipboard, Home/End/arrow editing, IME-safe text entry via logical keys. (Logical keys landed; cursor/selection still basic.)
+- [x] Real `TextInput`: cursor position/blinking, Shift+arrow selection, Home/End/arrow editing, in-process Ctrl/Cmd+C/X/V/A clipboard, IME-safe entry via logical keys. (System/OS clipboard bridge still TODO.)
 - [x] `ScrollView` primitive (`overflow: scroll`; scrollbar/drag still TODO).
 - [x] `Checkbox`, `Slider`, `Select/Dropdown`, `ProgressBar` primitives (compositional; Slider step-only, no track drag).
 - [x] `useInteraction` hook for hover/pressed (pressed depends on host press/release — now wired).
@@ -80,7 +80,7 @@ Remaining gaps: style coverage still missing text shadow / line-break and image 
 
 - [ ] Publish `bevy_react` to crates.io and `bevy-react` to npm with locked version pairing.
 - [x] Write real docs: README rewrite, getting-started, supported style props table, architecture notes, CONTRIBUTING, CHANGELOG. (rustdoc still thin.)
-- [ ] Ship 2–3 more examples (menu screen, HUD with game-state binding, forms/settings panel). (Planned in `docs/EXAMPLES.md`.)
+- [x] Ship 2–3 more examples: menu screen + forms/settings panel landed (`examples/menu`, `examples/forms`). HUD with game-state binding still waits on the data bridge.
 - [x] Rust↔React data bridge: a supported way to push game state into React (context/store fed from ECS) and call registered Rust functions from JS.
 - [ ] Bevy version support policy and a tracking matrix (currently pinned to 0.17.3).
 - [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until Epic 2 leftovers, Epic 4 TextInput depth, data bridge, and Epic 7 e2e land.

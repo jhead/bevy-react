@@ -1,3 +1,4 @@
+use bevy::camera::NormalizedRenderTarget;
 use bevy::ecs::archetype::Archetypes;
 use bevy::ecs::component::Components;
 use bevy::ecs::entity::Entities;
@@ -6,21 +7,21 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::input::ButtonState;
 use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
-use bevy::ui::{OverflowAxis, RelativeCursorPosition, ScrollPosition};
+use bevy::ui::{ComputedUiTargetCamera, OverflowAxis, RelativeCursorPosition, ScrollPosition};
+use bevy::window::PrimaryWindow;
 use serde_json::{Value, json};
 
 use crate::js_bevy::JsClientResource;
 use crate::react::event_queue::{
     keyboard_modifiers, logical_key_to_string, pointer_payload, scroll_payload, wheel_payload,
-    FLUSH_EVENTS_SCRIPT, ReactEventQueue,
+    FLUSH_EVENTS_SCRIPT, ReactEventQueue, ReactFocusCommand,
 };
 use crate::react::systems::{Focusable, FocusedNode, ReactNode, ReactRoot};
 
 /// Bevy-side request to focus a React node by id (programmatic focus API).
 ///
 /// Other Bevy systems can write this message; the React input systems apply it
-/// and emit `focus`/`blur` to JS. A JS→Rust bridge is not wired yet
-/// (would need a native `__react_request_focus`).
+/// and emit `focus`/`blur` to JS. JS can also call `__react_request_focus`.
 #[derive(Message, Clone, Debug)]
 pub struct RequestReactFocus {
     pub node_id: u64,
@@ -40,31 +41,36 @@ pub struct PreviousInteraction(pub Interaction);
 const SCROLL_LINE_HEIGHT: f32 = 20.0;
 
 /// Handle UI interactions and enqueue events for the native JS dispatcher
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn handle_input_interactions(
     mut query: Query<(
+        Entity,
         &Interaction,
         &ReactNode,
-        Entity,
         Option<&Focusable>,
         Option<&Button>,
         Option<&mut PreviousInteraction>,
         Option<&RelativeCursorPosition>,
+        Option<&ComputedUiTargetCamera>,
     )>,
     event_queue: Option<Res<ReactEventQueue>>,
     mut focused: ResMut<FocusedNode>,
     parents: Query<&ChildOf>,
     roots: Query<&ReactRoot>,
+    cameras: Query<&Camera>,
     windows: Query<&Window>,
+    primary_window: Query<Entity, With<PrimaryWindow>>,
     mut commands: Commands,
 ) {
     let Some(event_queue) = event_queue else {
         return;
     };
 
-    let window_cursor = windows.iter().find_map(|w| w.cursor_position());
+    let primary = primary_window.iter().next();
 
-    for (interaction, react_node, entity, focusable, button, prev, relative) in &mut query {
+    for (entity, interaction, react_node, focusable, button, prev, relative, target_camera) in
+        &mut query
+    {
         let prev_interaction = prev.as_ref().map(|p| p.0).unwrap_or(Interaction::None);
 
         if *interaction == prev_interaction {
@@ -77,6 +83,7 @@ pub fn handle_input_interactions(
         };
 
         let node_id = react_node.node_id;
+        let window_cursor = cursor_for_ui_target(target_camera, &cameras, &windows, primary);
         let payload = pointer_payload(relative, window_cursor);
         let can_focus = is_focus_target(focusable, button);
 
@@ -115,13 +122,15 @@ pub fn handle_input_interactions(
 
             log::debug!("Node press: id={}, root={}", node_id, root_id);
             event_queue.push_event(root_id.clone(), node_id, "press", payload.clone());
-            // Keep existing click-on-press timing
-            event_queue.push_event(root_id.clone(), node_id, "click", payload.clone());
         }
 
+        // DOM-style click: fire on release within bounds (still hovered), not on press.
         if was_pressed && !is_pressed {
             log::debug!("Node release: id={}, root={}", node_id, root_id);
             event_queue.push_event(root_id.clone(), node_id, "release", payload.clone());
+            if is_hovered {
+                event_queue.push_event(root_id.clone(), node_id, "click", payload.clone());
+            }
         }
 
         if !was_hovered && is_hovered {
@@ -136,6 +145,53 @@ pub fn handle_input_interactions(
             commands
                 .entity(entity)
                 .insert(PreviousInteraction(*interaction));
+        }
+    }
+}
+
+/// Emit `mousemove` (and `drag` while pressed) when relative cursor position changes.
+#[allow(clippy::type_complexity)]
+pub fn handle_pointer_move(
+    query: Query<
+        (
+            Entity,
+            &Interaction,
+            &ReactNode,
+            &RelativeCursorPosition,
+            Option<&ComputedUiTargetCamera>,
+        ),
+        Changed<RelativeCursorPosition>,
+    >,
+    event_queue: Option<Res<ReactEventQueue>>,
+    parents: Query<&ChildOf>,
+    roots: Query<&ReactRoot>,
+    cameras: Query<&Camera>,
+    windows: Query<&Window>,
+    primary_window: Query<Entity, With<PrimaryWindow>>,
+) {
+    let Some(event_queue) = event_queue else {
+        return;
+    };
+
+    let primary = primary_window.iter().next();
+
+    for (entity, interaction, react_node, relative, target_camera) in &query {
+        // Only emit while the pointer is over or capturing the node.
+        if matches!(*interaction, Interaction::None) {
+            continue;
+        }
+
+        let Some(root_id) = find_root_id(entity, &parents, &roots) else {
+            continue;
+        };
+
+        let window_cursor = cursor_for_ui_target(target_camera, &cameras, &windows, primary);
+        let payload = pointer_payload(Some(relative), window_cursor);
+        let node_id = react_node.node_id;
+
+        event_queue.push_event(root_id.clone(), node_id, "mousemove", payload.clone());
+        if *interaction == Interaction::Pressed {
+            event_queue.push_event(root_id, node_id, "drag", payload);
         }
     }
 }
@@ -285,28 +341,45 @@ pub fn handle_wheel_scroll(
                 };
 
                 if let Ok(react_node) = react_nodes.get(entity)
-                    && let Some(root_id) = find_root_id(entity, &parents, &roots) {
-                        let node_id = react_node.node_id;
+                    && let Some(root_id) = find_root_id(entity, &parents, &roots)
+                {
+                    let node_id = react_node.node_id;
+                    event_queue.push_event(
+                        root_id.clone(),
+                        node_id,
+                        "wheel",
+                        wheel_payload(delta, mouse_wheel.unit),
+                    );
+                    if applied != Vec2::ZERO {
                         event_queue.push_event(
-                            root_id.clone(),
+                            root_id,
                             node_id,
-                            "wheel",
-                            wheel_payload(delta, mouse_wheel.unit),
+                            "scroll",
+                            scroll_payload(next_pos.x, next_pos.y, applied),
                         );
-                        if applied != Vec2::ZERO {
-                            event_queue.push_event(
-                                root_id,
-                                node_id,
-                                "scroll",
-                                scroll_payload(next_pos.x, next_pos.y, applied),
-                            );
-                        }
                     }
+                }
 
                 current = parents.get(entity).ok().map(|c| c.parent());
             }
         }
     }
+}
+
+/// Resolve cursor position from the window that owns this UI node's target camera.
+fn cursor_for_ui_target(
+    target_camera: Option<&ComputedUiTargetCamera>,
+    cameras: &Query<&Camera>,
+    windows: &Query<&Window>,
+    primary_window: Option<Entity>,
+) -> Option<Vec2> {
+    let camera_entity = target_camera.and_then(|t| t.get())?;
+    let camera = cameras.get(camera_entity).ok()?;
+    let NormalizedRenderTarget::Window(window_ref) = camera.target.normalize(primary_window)?
+    else {
+        return None;
+    };
+    windows.get(window_ref.entity()).ok()?.cursor_position()
 }
 
 /// Find the React root id by traversing up the entity hierarchy
@@ -347,27 +420,24 @@ fn apply_focus(
     }
 
     if let Some(old_id) = focused.node_id {
-        let blur_root = focused
-            .module_name
-            .clone()
-            .unwrap_or_else(|| root_id.clone());
+        let blur_root = focused.root_id.clone().unwrap_or_else(|| root_id.clone());
         event_queue.push_event(blur_root, old_id, "blur", Value::Null);
     }
 
     focused.node_id = Some(node_id);
     focused.entity = Some(entity);
-    focused.module_name = Some(root_id.clone());
+    focused.root_id = Some(root_id.clone());
     event_queue.push_event(root_id, node_id, "focus", Value::Null);
 }
 
 fn clear_focus(focused: &mut FocusedNode, event_queue: &ReactEventQueue) {
     let Some(old_id) = focused.node_id.take() else {
         focused.entity = None;
-        focused.module_name = None;
+        focused.root_id = None;
         return;
     };
 
-    let blur_root = focused.module_name.take().unwrap_or_default();
+    let blur_root = focused.root_id.take().unwrap_or_default();
     focused.entity = None;
 
     if !blur_root.is_empty() {
@@ -375,7 +445,41 @@ fn clear_focus(focused: &mut FocusedNode, event_queue: &ReactEventQueue) {
     }
 }
 
-/// Apply [`RequestReactFocus`] / [`RequestReactBlur`] messages (Bevy programmatic focus API).
+fn apply_focus_command(
+    command: ReactFocusCommand,
+    event_queue: &ReactEventQueue,
+    focused: &mut FocusedNode,
+    targets: &Query<(Entity, &ReactNode, Option<&Focusable>, Option<&Button>)>,
+    parents: &Query<&ChildOf>,
+    roots: &Query<&ReactRoot>,
+) {
+    match command {
+        ReactFocusCommand::Blur => clear_focus(focused, event_queue),
+        ReactFocusCommand::Focus { node_id, root_id } => {
+            let Some((entity, react_node, focusable, button)) =
+                targets.iter().find(|(_, rn, _, _)| rn.node_id == node_id)
+            else {
+                log::warn!("RequestReactFocus: no entity for node_id={node_id}");
+                return;
+            };
+
+            if !is_focus_target(focusable, button) {
+                log::warn!("RequestReactFocus: node_id={node_id} is not a focus target");
+                return;
+            }
+
+            let resolved_root = root_id.or_else(|| find_root_id(entity, parents, roots));
+            let Some(resolved_root) = resolved_root else {
+                log::warn!("RequestReactFocus: no ReactRoot for node_id={node_id}");
+                return;
+            };
+
+            apply_focus(focused, event_queue, entity, react_node.node_id, resolved_root);
+        }
+    }
+}
+
+/// Apply [`RequestReactFocus`] / [`RequestReactBlur`] messages and JS focus commands.
 pub fn apply_focus_requests(
     mut focus_requests: MessageReader<RequestReactFocus>,
     mut blur_requests: MessageReader<RequestReactBlur>,
@@ -394,44 +498,27 @@ pub fn apply_focus_requests(
     }
 
     for request in focus_requests.read() {
-        let Some((entity, react_node, focusable, button)) = targets
-            .iter()
-            .find(|(_, rn, _, _)| rn.node_id == request.node_id)
-        else {
-            log::warn!(
-                "RequestReactFocus: no entity for node_id={}",
-                request.node_id
-            );
-            continue;
-        };
-
-        if !is_focus_target(focusable, button) {
-            log::warn!(
-                "RequestReactFocus: node_id={} is not a focus target",
-                request.node_id
-            );
-            continue;
-        }
-
-        let root_id = request
-            .root_id
-            .clone()
-            .or_else(|| find_root_id(entity, &parents, &roots));
-
-        let Some(root_id) = root_id else {
-            log::warn!(
-                "RequestReactFocus: no ReactRoot for node_id={}",
-                request.node_id
-            );
-            continue;
-        };
-
-        apply_focus(
-            &mut focused,
+        apply_focus_command(
+            ReactFocusCommand::Focus {
+                node_id: request.node_id,
+                root_id: request.root_id.clone(),
+            },
             &event_queue,
-            entity,
-            react_node.node_id,
-            root_id,
+            &mut focused,
+            &targets,
+            &parents,
+            &roots,
+        );
+    }
+
+    for command in event_queue.drain_focus_commands() {
+        apply_focus_command(
+            command,
+            &event_queue,
+            &mut focused,
+            &targets,
+            &parents,
+            &roots,
         );
     }
 }
@@ -452,11 +539,12 @@ fn collect_focus_targets(
         out: &mut Vec<(Entity, u64, String, bool)>,
     ) {
         if let Ok((e, rn, focusable, button)) = targets.get(entity)
-            && is_focus_target(focusable, button) {
-                // `is_text_like`: Focusable marker (text inputs) — arrows stay for editing.
-                let is_text_like = focusable.is_some();
-                out.push((e, rn.node_id, root_id.to_string(), is_text_like));
-            }
+            && is_focus_target(focusable, button)
+        {
+            // `is_text_like`: Focusable marker (text inputs) — arrows stay for editing.
+            let is_text_like = focusable.is_some();
+            out.push((e, rn.node_id, root_id.to_string(), is_text_like));
+        }
 
         if let Ok(kids) = children.get(entity) {
             for child in kids.iter() {
@@ -578,8 +666,7 @@ pub fn handle_keyboard_input(
             continue;
         };
 
-        // Legacy field: stores root_id for the focused element
-        let Some(ref root_id) = focused.module_name else {
+        let Some(ref root_id) = focused.root_id else {
             continue;
         };
 

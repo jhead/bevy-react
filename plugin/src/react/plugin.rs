@@ -45,6 +45,7 @@ impl Plugin for ReactPlugin {
                 (
                     process_react_messages,
                     handle_input_interactions,
+                    handle_pointer_move,
                     handle_click_outside_blur,
                     handle_wheel_scroll,
                     apply_focus_requests,

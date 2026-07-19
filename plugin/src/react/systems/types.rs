@@ -170,6 +170,6 @@ pub struct FocusedNode {
     pub node_id: Option<u64>,
     /// The entity that has focus
     pub entity: Option<Entity>,
-    /// The module name for the focused element (cached for keyboard events)
-    pub module_name: Option<String>,
+    /// React root id for the focused element (cached for keyboard events)
+    pub root_id: Option<String>,
 }

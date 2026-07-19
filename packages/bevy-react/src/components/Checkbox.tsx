@@ -19,7 +19,8 @@ export interface CheckboxProps {
 /**
  * Toggle checkbox mapped to Bevy's headless `ui_widgets::Checkbox`.
  *
- * Host owns click / keyboard toggle; React supplies the box look and checkmark.
+ * Host owns click / keyboard toggle and `style.checked` / `style.hover` visuals
+ * (from Bevy `Checked` / picking `Hovered`). React supplies the checkmark child.
  */
 export function Checkbox({
   checked,
@@ -44,7 +45,15 @@ export function Checkbox({
     justifyContent: "center",
     borderWidth: 2,
     borderColor: "#6a6a7a",
-    backgroundColor: checked ? "#5a5aff" : "#2a2a3a",
+    backgroundColor: "#2a2a3a",
+    // Host applies these from Checked / Hovered markers (no React round-trip).
+    checked: {
+      backgroundColor: "#5a5aff",
+      borderColor: "#5a5aff",
+    },
+    hover: {
+      borderColor: "#8a8aff",
+    },
     ...boxStyle,
   };
 

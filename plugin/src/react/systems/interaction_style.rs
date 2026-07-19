@@ -1,9 +1,10 @@
-//! Host-side interaction styling: merge hover/pressed/focused overrides and
+//! Host-side interaction styling: merge hover/pressed/focused/checked overrides and
 //! apply simple color/opacity transitions without React round-trips.
 
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::text::TextColor;
-use bevy::ui::FocusPolicy;
+use bevy::ui::{Checked, FocusPolicy};
 
 use crate::react::style::{
     json_to_style, parse_color, resolve_interaction_style, style_opacity, style_pointer_events,
@@ -21,7 +22,9 @@ pub fn apply_interaction_styles(
     focused: Res<FocusedNode>,
     mut query: Query<(
         Entity,
-        &Interaction,
+        Option<&Interaction>,
+        Option<&Hovered>,
+        Option<&Checked>,
         &ReactNode,
         &mut ReactStyleState,
         Option<&BackgroundColor>,
@@ -31,17 +34,25 @@ pub fn apply_interaction_styles(
 ) {
     let dt = time.delta_secs();
 
-    for (entity, interaction, react_node, mut state, bg, border, text_color) in &mut query {
+    for (entity, interaction, hovered, checked, react_node, mut state, bg, border, text_color) in
+        &mut query
+    {
         let is_focused =
             focused.entity == Some(entity) || focused.node_id == Some(react_node.node_id);
+        let interaction = interaction.copied().unwrap_or(Interaction::None);
+        let is_checked = checked.is_some();
+        let is_hovered = hovered.map(|h| h.get()).unwrap_or(false);
 
         let target = resolve_interaction_style(
             &state.base,
             state.hover.as_ref(),
             state.pressed.as_ref(),
             state.focused.as_ref(),
-            *interaction,
+            state.checked.as_ref(),
+            interaction,
             is_focused,
+            is_checked,
+            is_hovered,
         );
 
         let transition = state.transition.clone();

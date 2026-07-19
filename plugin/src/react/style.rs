@@ -297,6 +297,8 @@ pub struct StyleProps {
     pub pressed: Option<Box<StyleProps>>,
     /// Host-side focused overrides (from [`crate::react::systems::FocusedNode`]).
     pub focused: Option<Box<StyleProps>>,
+    /// Host-side checked overrides (Bevy UI [`Checked`] marker, e.g. checkbox).
+    pub checked: Option<Box<StyleProps>>,
     /// Host-side color/numeric transitions between interaction states.
     #[serde(default)]
     pub transition: StyleTransitions,
@@ -323,6 +325,9 @@ impl StyleProps {
         if let Some(ref mut focused) = self.focused {
             focused.finalize_parse();
         }
+        if let Some(ref mut checked) = self.checked {
+            checked.finalize_parse();
+        }
     }
 
     /// True when host-side interaction styling or transitions are present.
@@ -330,15 +335,17 @@ impl StyleProps {
         self.hover.is_some()
             || self.pressed.is_some()
             || self.focused.is_some()
+            || self.checked.is_some()
             || !self.transition.is_empty()
     }
 
-    /// Clone without hover/pressed/focused/transition/unknown (pure visual+layout props).
+    /// Clone without hover/pressed/focused/checked/transition/unknown (pure visual+layout props).
     pub fn without_interaction_meta(&self) -> StyleProps {
         let mut out = self.clone();
         out.hover = None;
         out.pressed = None;
         out.focused = None;
+        out.checked = None;
         out.transition = StyleTransitions::default();
         out.unknown.clear();
         out
@@ -443,41 +450,52 @@ pub fn merge_style_props(base: &StyleProps, overlay: &StyleProps) -> StyleProps 
         hover: None,
         pressed: None,
         focused: None,
+        checked: None,
         transition: StyleTransitions::default(),
         unknown: HashMap::new(),
     }
 }
 
-/// Resolve base + focused + hover + pressed (pressed wins over hover).
+/// Resolve base + checked + focused + hover + pressed.
+///
+/// Order (later wins): base → checked → focused → hover → pressed.
+/// `is_hovered` covers Bevy [`Interaction`] hover/press **or** picking [`Hovered`].
 pub fn resolve_interaction_style(
     base: &StyleProps,
     hover: Option<&StyleProps>,
     pressed: Option<&StyleProps>,
     focused: Option<&StyleProps>,
+    checked: Option<&StyleProps>,
     interaction: Interaction,
     is_focused: bool,
+    is_checked: bool,
+    is_hovered: bool,
 ) -> StyleProps {
     let mut resolved = base.without_interaction_meta();
+    if is_checked {
+        if let Some(c) = checked {
+            resolved = merge_style_props(&resolved, c);
+        }
+    }
     if is_focused {
         if let Some(f) = focused {
             resolved = merge_style_props(&resolved, f);
         }
     }
-    match interaction {
-        Interaction::Hovered => {
-            if let Some(h) = hover {
-                resolved = merge_style_props(&resolved, h);
-            }
+    let hovered = is_hovered
+        || matches!(
+            interaction,
+            Interaction::Hovered | Interaction::Pressed
+        );
+    if hovered {
+        if let Some(h) = hover {
+            resolved = merge_style_props(&resolved, h);
         }
-        Interaction::Pressed => {
-            if let Some(h) = hover {
-                resolved = merge_style_props(&resolved, h);
-            }
-            if let Some(p) = pressed {
-                resolved = merge_style_props(&resolved, p);
-            }
+    }
+    if interaction == Interaction::Pressed {
+        if let Some(p) = pressed {
+            resolved = merge_style_props(&resolved, p);
         }
-        Interaction::None => {}
     }
     resolved
 }
@@ -2587,11 +2605,56 @@ mod tests {
             props.hover.as_deref(),
             props.pressed.as_deref(),
             props.focused.as_deref(),
+            None,
             Interaction::Pressed,
+            true,
+            false,
             true,
         );
         assert_eq!(resolved.background_color.as_deref(), Some("#222"));
         assert_eq!(resolved.border_color.as_deref(), Some("#4af"));
+    }
+
+    #[test]
+    fn test_checked_style_override() {
+        let mut props: StyleProps = serde_json::from_str(
+            r##"{
+                "backgroundColor": "#2a2a3a",
+                "checked": { "backgroundColor": "#5a5aff", "borderColor": "#5a5aff" },
+                "hover": { "borderColor": "#8a8aff" }
+            }"##,
+        )
+        .unwrap();
+        props.finalize_parse();
+        assert!(props.has_interaction_styles());
+
+        let checked = resolve_interaction_style(
+            &props.without_interaction_meta(),
+            props.hover.as_deref(),
+            None,
+            None,
+            props.checked.as_deref(),
+            Interaction::None,
+            false,
+            true,
+            false,
+        );
+        assert_eq!(checked.background_color.as_deref(), Some("#5a5aff"));
+        assert_eq!(checked.border_color.as_deref(), Some("#5a5aff"));
+
+        let checked_hover = resolve_interaction_style(
+            &props.without_interaction_meta(),
+            props.hover.as_deref(),
+            None,
+            None,
+            props.checked.as_deref(),
+            Interaction::None,
+            false,
+            true,
+            true,
+        );
+        assert_eq!(checked_hover.background_color.as_deref(), Some("#5a5aff"));
+        assert_eq!(checked_hover.border_color.as_deref(), Some("#8a8aff"));
     }
 
     #[test]

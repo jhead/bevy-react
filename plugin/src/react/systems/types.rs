@@ -196,7 +196,7 @@ pub struct FocusedNode {
     pub root_id: Option<String>,
 }
 
-/// Host-owned interaction style state (hover / pressed / focused + transitions).
+/// Host-owned interaction style state (hover / pressed / focused / checked + transitions).
 ///
 /// Stored when React style props include nested overrides or a `transition`.
 /// Applied each frame by [`crate::react::systems::apply_interaction_styles`].
@@ -206,6 +206,7 @@ pub struct ReactStyleState {
     pub hover: Option<crate::react::style::StyleProps>,
     pub pressed: Option<crate::react::style::StyleProps>,
     pub focused: Option<crate::react::style::StyleProps>,
+    pub checked: Option<crate::react::style::StyleProps>,
     pub transition: crate::react::style::StyleTransitions,
     pub anim: StyleAnimationState,
 }
@@ -226,6 +227,10 @@ impl ReactStyleState {
                 .focused
                 .as_ref()
                 .map(|f| f.without_interaction_meta()),
+            checked: props
+                .checked
+                .as_ref()
+                .map(|c| c.without_interaction_meta()),
             transition: props.transition.clone(),
             anim: StyleAnimationState::default(),
         }

@@ -11,7 +11,7 @@ The early epic checklist (render pipeline, styles, events, compositional widgets
 | Area | What works |
 |---|---|
 | **Render pipeline** | Create/update/destroy nodes, multi-root containers, root teardown on `ReactRoot` despawn, deep-diff updates, recursive unmount/despawn |
-| **Styles** | Layout (flex/grid), shorthands, colors, text/`fontFamily`, opacity/shadows/gradients, images, `pointerEvents`, **host `hover`/`pressed`/`focused` + transitions**, unknown-prop warnings |
+| **Styles** | Layout (flex/grid), shorthands, colors, text/`fontFamily`, opacity/shadows/gradients, images, `pointerEvents`, **host `hover`/`pressed`/`focused`/`checked` + transitions**, unknown-prop warnings |
 | **Events** | Native event queue (no `eval`), click/press/release, keys/modifiers, wheel/scroll, focus, bubbling, pointer-move/drag |
 | **Widgets** | Thin React wrappers over `bevy_ui_widgets` for Button/Slider/Checkbox; TextInput, ScrollView, Select, ProgressBar, Portal |
 | **Bridge** | Resource stores (`register_resource_store`), `useResource` / selectors, Promise `callNative` ([BRIDGE.md](BRIDGE.md)) |
@@ -57,16 +57,17 @@ JS keeps `onClick` and friends; visual interaction state is host-owned.
 
 - [x] `style={{ hover, pressed, focused }}` applied in Rust from Bevy `Interaction` / focus
 - [x] Host-side transitions / tweens for color/opacity fields
+- [x] `style.checked` from Bevy UI `Checked`; hover also from picking `Hovered`
 
-### 3. Bevy 0.17 headless widgets — *partial* (core mapped)
+### 3. Bevy 0.17 headless widgets — *done* (MVP)
 
-Host owns Slider/Checkbox interaction; polish gaps remain.
+Host owns Slider/Checkbox interaction; Bevy Slider drag remains horizontal-only upstream.
 
 - [x] Feature-gate `experimental_bevy_ui_widgets`
 - [x] Map Button / Slider / Checkbox to host-side `bevy_ui_widgets`
 - [x] Thin React wrappers that compose host behavior (delete step-button fake slider)
-- [ ] Button `Activate` → React `click` (Interaction still owns click to avoid double-fire)
-- [ ] Vertical slider / thumb layout polish; host styles for `Checked`/`Hovered` widget markers
+- [x] Button `Activate` → React `click` (keyboard only; pointer still via Interaction to avoid double-fire)
+- [x] Vertical slider / thumb layout polish; host styles for `Checked`/`Hovered` widget markers (`style.checked`)
 
 ### 4. ECS escape hatch — *done* (MVP)
 

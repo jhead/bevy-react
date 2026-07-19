@@ -6,16 +6,16 @@
 use bevy::input_focus::InputDispatchPlugin;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::ui::{Checked, InteractionDisabled};
+use bevy::ui::{Checked, InteractionDisabled, Pressed};
 use bevy::ui_widgets::{
-    observe, Button as WidgetButton, Checkbox, CoreSliderDragState, Slider, SliderRange,
+    observe, Activate, Button as WidgetButton, Checkbox, CoreSliderDragState, Slider, SliderRange,
     SliderStep, SliderThumb, SliderValue, UiWidgetsPlugins, ValueChange,
 };
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::react::event_queue::ReactEventQueue;
-use crate::react::systems::{ReactNode, ReactRoot};
+use crate::react::systems::{process_react_messages, ReactNode, ReactRoot};
 
 /// Widget props parsed from the React props JSON (not style.rs).
 #[derive(Debug, Default, Deserialize)]
@@ -27,6 +27,12 @@ struct WidgetProps {
     step: Option<f32>,
     checked: Option<bool>,
     disabled: Option<bool>,
+    /// `"horizontal"` (default) or `"vertical"`.
+    ///
+    /// Bevy 0.17's headless [`Slider`] drag/keyboard math is horizontal-only
+    /// (`// TODO: vertical` upstream). Vertical still positions the thumb on the
+    /// Y axis for layout demos; pointer drag remains width-based.
+    orientation: Option<String>,
 }
 
 fn parse_widget_props(props_json: &str) -> WidgetProps {
@@ -56,19 +62,39 @@ fn apply_disabled(entity_commands: &mut EntityCommands, disabled: bool) {
     }
 }
 
+fn is_vertical_orientation(orientation: Option<&str>) -> bool {
+    orientation.is_some_and(|o| o.eq_ignore_ascii_case("vertical"))
+}
+
+/// Marker storing slider orientation for thumb sync (Bevy Slider has no vertical API yet).
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SliderOrientation {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
 /// Register widget plugins required for headless controls.
 pub fn add_widget_plugins(app: &mut App) {
     app.add_plugins((UiWidgetsPlugins, InputDispatchPlugin))
-        .add_systems(Update, sync_slider_thumb_positions);
+        .add_systems(
+            Update,
+            sync_slider_thumb_positions.after(process_react_messages),
+        );
 }
 
 /// Attach headless [`WidgetButton`] alongside the legacy UI `Button` marker.
 ///
-/// Clicks still flow through Interaction → `input.rs` (avoids double-firing with
-/// [`bevy::ui_widgets::Activate`]). WidgetButton supplies `Pressed` / a11y for
-/// host styling.
+/// Pointer clicks still flow through Interaction → `input.rs`. [`Activate`] from
+/// pointer arrives while [`Pressed`] is still present (deferred remove) and is
+/// skipped here; keyboard Enter/Space Activate has no [`Pressed`] and becomes
+/// React `click` (no double-fire).
 pub fn insert_button_widget(entity_commands: &mut EntityCommands) {
-    entity_commands.insert((WidgetButton, Hovered::default()));
+    entity_commands.insert((
+        WidgetButton,
+        Hovered::default(),
+        observe(forward_button_activate),
+    ));
 }
 
 /// Attach headless [`Slider`] + range/value/step and forward [`ValueChange<f32>`].
@@ -78,12 +104,18 @@ pub fn insert_slider_widget(entity_commands: &mut EntityCommands, props_json: &s
     let max = props.max.unwrap_or(1.0);
     let value = props.value.unwrap_or(min);
     let step = props.step.unwrap_or(1.0);
+    let orientation = if is_vertical_orientation(props.orientation.as_deref()) {
+        SliderOrientation::Vertical
+    } else {
+        SliderOrientation::Horizontal
+    };
 
     entity_commands.insert((
         Slider::default(),
         SliderValue(value),
         SliderRange::new(min, max),
         SliderStep(step),
+        orientation,
         Hovered::default(),
         observe(forward_slider_change),
     ));
@@ -141,7 +173,17 @@ pub fn sync_widget_props(commands: &mut Commands, entity: Entity, props_json: St
                 .map(|d| d.dragging)
                 .unwrap_or(false);
 
-            entity_mut.insert((SliderRange::new(min, max), SliderStep(step)));
+            let orientation = if is_vertical_orientation(props.orientation.as_deref()) {
+                SliderOrientation::Vertical
+            } else {
+                SliderOrientation::Horizontal
+            };
+
+            entity_mut.insert((
+                SliderRange::new(min, max),
+                SliderStep(step),
+                orientation,
+            ));
 
             // Avoid stomping the live drag value with a stale controlled prop.
             if !dragging {
@@ -176,6 +218,30 @@ pub fn sync_widget_props(commands: &mut Commands, entity: Entity, props_json: St
             }
         }
     });
+}
+
+/// Keyboard Activate → React `click`. Pointer Activate is ignored (see [`insert_button_widget`]).
+fn forward_button_activate(
+    activate: On<Activate>,
+    pressed: Query<Has<Pressed>>,
+    event_queue: Res<ReactEventQueue>,
+    nodes: Query<&ReactNode>,
+    parents: Query<&ChildOf>,
+    roots: Query<&ReactRoot>,
+) {
+    // Pointer path: Activate is triggered while `Pressed` is still visible to this
+    // query (Release's remove is deferred). Keyboard Enter/Space never inserts Pressed.
+    if pressed.get(activate.entity).unwrap_or(false) {
+        return;
+    }
+
+    let Ok(node) = nodes.get(activate.entity) else {
+        return;
+    };
+    let Some(root_id) = find_root_id(activate.entity, &parents, &roots) else {
+        return;
+    };
+    event_queue.push_event(root_id, node.node_id, "click", json!({}));
 }
 
 fn forward_slider_change(
@@ -234,16 +300,33 @@ fn forward_checkbox_change(
 }
 
 /// Position slider thumbs from host [`SliderValue`] (smooth drag without waiting on React).
+///
+/// Travel is expected to be inset by thumb size on the trailing edge so percent
+/// positions match Bevy's drag math (full track minus thumb).
 fn sync_slider_thumb_positions(
-    sliders: Query<(Entity, &SliderValue, &SliderRange), (With<Slider>, With<ReactNode>)>,
+    sliders: Query<
+        (Entity, &SliderValue, &SliderRange, Option<&SliderOrientation>),
+        (With<Slider>, With<ReactNode>),
+    >,
     children: Query<&Children>,
     mut thumbs: Query<&mut Node, With<SliderThumb>>,
 ) {
-    for (slider_ent, value, range) in &sliders {
+    for (slider_ent, value, range, orientation) in &sliders {
         let pct = range.thumb_position(value.0) * 100.0;
+        let vertical = orientation == Some(&SliderOrientation::Vertical);
         for child in children.iter_descendants(slider_ent) {
             if let Ok(mut thumb_node) = thumbs.get_mut(child) {
-                thumb_node.left = Val::Percent(pct);
+                if vertical {
+                    // CSS-like: 0% at top → min; grow downward with value.
+                    thumb_node.top = Val::Percent(pct);
+                    thumb_node.left = Val::Auto;
+                    thumb_node.right = Val::Auto;
+                    thumb_node.bottom = Val::Auto;
+                } else {
+                    thumb_node.left = Val::Percent(pct);
+                    thumb_node.right = Val::Auto;
+                    // Keep author-provided vertical centering (`top`) intact.
+                }
             }
         }
     }

@@ -81,7 +81,9 @@ Parsers and builders live in `style.rs`. Layout-independent props are applied by
 
 ## Interaction styles (host-side)
 
-Hover / pressed / focused visuals are applied entirely in Rust from Bevy `Interaction` and focus state — no React re-render required. JS still owns `onClick` and other event handlers.
+Hover / pressed / focused / checked visuals are applied entirely in Rust from Bevy
+`Interaction`, picking `Hovered`, focus state, and the UI `Checked` marker — no React
+re-render required. JS still owns `onClick` and other event handlers.
 
 ```tsx
 style={{
@@ -89,15 +91,19 @@ style={{
   hover: { backgroundColor: '#555' },
   pressed: { backgroundColor: '#222' },
   focused: { borderColor: '#4af' },
+  checked: { backgroundColor: '#5a5aff' }, // e.g. Checkbox
   transition: 'backgroundColor 100ms', // or { backgroundColor: 100 }
 }}
 ```
 
+Merge order (later wins): **base → checked → focused → hover → pressed**.
+
 | Prop | Effect |
 |---|---|
-| `hover` | Nested `BevyStyle` when `Interaction::Hovered` (and under pressed before `pressed` wins) |
+| `hover` | Nested `BevyStyle` when `Interaction` is hovered/pressed **or** picking `Hovered(true)` |
 | `pressed` | Nested overrides when `Interaction::Pressed` |
 | `focused` | Nested overrides when the node has keyboard/input focus |
+| `checked` | Nested overrides when Bevy UI `Checked` is present (checkbox / toggles) |
 | `transition` | Host-side lerp for `backgroundColor`, `borderColor`, `color`, `opacity` (string or `{ prop: ms }`) |
 
 Unknown style keys are logged with `log::warn` at parse time (`Unsupported style prop '…'`) instead of being silently dropped.

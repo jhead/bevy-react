@@ -143,13 +143,19 @@ export interface BevyStyle {
 
   /**
    * Host-side hover style overrides. Applied in Rust from Bevy `Interaction`
-   * (no React round-trip). JS still handles `onClick` / pointer events.
+   * or picking `Hovered` (no React round-trip). JS still handles `onClick` /
+   * pointer events.
    */
   hover?: BevyStyle;
   /** Host-side pressed / active overrides (`Interaction::Pressed`). */
   pressed?: BevyStyle;
   /** Host-side focused overrides (keyboard / input focus). */
   focused?: BevyStyle;
+  /**
+   * Host-side checked overrides (Bevy UI `Checked` marker, e.g. checkbox).
+   * Merged under hover/pressed: base → checked → focused → hover → pressed.
+   */
+  checked?: BevyStyle;
   /**
    * Host-side transitions for color/numeric props between interaction states.
    * String: `"backgroundColor 100ms"` or `"backgroundColor 100ms, opacity 200ms"`.
@@ -253,6 +259,8 @@ export interface SliderHostProps extends NodeProps {
   min?: number;
   max?: number;
   step?: number;
+  /** Visual axis; Bevy 0.17 drag math remains horizontal. */
+  orientation?: "horizontal" | "vertical";
   disabled?: boolean;
   onChange?: (event: ChangeSyntheticEvent | { value: number }) => void;
 }

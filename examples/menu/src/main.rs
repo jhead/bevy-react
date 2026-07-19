@@ -4,11 +4,15 @@ use bevy_react::{
     js_bevy::JsPlugin,
 };
 
+#[path = "../../common/auto_screenshot.rs"]
+mod auto_screenshot;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(JsPlugin)
         .add_plugins(ReactPlugin)
+        .add_plugins(auto_screenshot::AutoScreenshotPlugin)
         .add_systems(Startup, setup)
         .run();
 }

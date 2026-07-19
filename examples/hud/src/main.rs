@@ -10,11 +10,15 @@ use bevy_react::{
 };
 use serde::Serialize;
 
+#[path = "../../common/auto_screenshot.rs"]
+mod auto_screenshot;
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(JsPlugin)
         .add_plugins(ReactPlugin)
+        .add_plugins(auto_screenshot::AutoScreenshotPlugin)
         .insert_resource(PlayerStats {
             hp: 100,
             max_hp: 100,

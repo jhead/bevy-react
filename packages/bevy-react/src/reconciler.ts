@@ -4,6 +4,8 @@ import type {
   BevyTextInstance,
   KeyboardEventData,
   PointerEventData,
+  ScrollEventData,
+  WheelEventData,
 } from "./types";
 
 type Type = string;
@@ -11,9 +13,12 @@ type Props = Record<string, unknown>;
 type Container = { rootId: number };
 type Instance = BevyInstance;
 type TextInstance = BevyTextInstance;
-type PublicInstance = Instance | TextInstance;
+export type PublicInstance = Instance | TextInstance;
 type HostContext = Record<string, never>;
 type UpdatePayload = Props;
+
+/** Per-root map of host instances keyed by node id. */
+export type BevyInstanceMap = Map<number, PublicInstance>;
 
 /**
  * Deep-compare values for update diffing.
@@ -133,108 +138,147 @@ function log(...args: unknown[]): void {
 }
 
 /**
- * Map of node IDs to instances, used for event dispatching
+ * Event payload from the host (keyboard, pointer, wheel/scroll, or absent).
  */
-const instanceMap = new Map<number, PublicInstance>();
+type HostEventData =
+  | KeyboardEventData
+  | PointerEventData
+  | WheelEventData
+  | ScrollEventData
+  | null
+  | undefined;
 
-/**
- * Event payload from the host (keyboard, pointer, or absent).
- */
-type HostEventData = KeyboardEventData | PointerEventData | null | undefined;
+/** Events that bubble from target toward ancestors until `stopPropagation`. */
+const BUBBLING_EVENTS = new Set([
+  "click",
+  "press",
+  "release",
+  "keydown",
+  "keyup",
+  "wheel",
+  "scroll",
+]);
 
-/**
- * Global event dispatcher called from Rust (via events.ts host bridge).
- */
-export function dispatchEvent(
-  nodeId: number,
+function invokeHandler(
+  props: Record<string, unknown>,
   event: string,
-  data?: HostEventData
-) {
-  const instance = instanceMap.get(nodeId);
-  if (!instance) {
-    log("Dispatch event: instance not found", nodeId);
-    return;
-  }
-
-  log("Dispatch event", event, "nodeId:", nodeId, data);
-
-  // Text instances don't have props
-  if (!("props" in instance) || !instance.props) {
-    return;
-  }
-
-  const props = instance.props;
-  const pointer = data as PointerEventData | undefined;
-  const keyboard = data as KeyboardEventData | undefined;
-
+  synthetic: Record<string, unknown>
+): void {
   switch (event) {
     case "click": {
       const onClick = props.onClick;
-      if (typeof onClick === "function") {
-        onClick(pointer);
-      }
+      if (typeof onClick === "function") onClick(synthetic);
       break;
     }
     case "press": {
       const onPress = props.onPress;
-      if (typeof onPress === "function") {
-        onPress(pointer);
-      }
+      if (typeof onPress === "function") onPress(synthetic);
       break;
     }
     case "release": {
       const onRelease = props.onRelease;
-      if (typeof onRelease === "function") {
-        onRelease(pointer);
-      }
+      if (typeof onRelease === "function") onRelease(synthetic);
       break;
     }
     case "focus": {
       const onFocus = props.onFocus;
-      if (typeof onFocus === "function") {
-        onFocus();
-      }
+      if (typeof onFocus === "function") onFocus();
       break;
     }
     case "blur": {
       const onBlur = props.onBlur;
-      if (typeof onBlur === "function") {
-        onBlur();
-      }
+      if (typeof onBlur === "function") onBlur();
       break;
     }
     case "keydown": {
       const onKeyDown = props.onKeyDown;
-      if (typeof onKeyDown === "function" && keyboard) {
-        onKeyDown(keyboard);
-      }
+      if (typeof onKeyDown === "function") onKeyDown(synthetic);
       break;
     }
     case "keyup": {
       const onKeyUp = props.onKeyUp;
-      if (typeof onKeyUp === "function" && keyboard) {
-        onKeyUp(keyboard);
-      }
+      if (typeof onKeyUp === "function") onKeyUp(synthetic);
       break;
     }
     case "mouseenter": {
       const onHover = props.onHover;
-      if (typeof onHover === "function") {
-        onHover(pointer);
-      }
+      if (typeof onHover === "function") onHover(synthetic);
       const onMouseEnter = props.onMouseEnter;
-      if (typeof onMouseEnter === "function") {
-        onMouseEnter(pointer);
-      }
+      if (typeof onMouseEnter === "function") onMouseEnter(synthetic);
       break;
     }
     case "mouseleave": {
       const onMouseLeave = props.onMouseLeave;
-      if (typeof onMouseLeave === "function") {
-        onMouseLeave(pointer);
-      }
+      if (typeof onMouseLeave === "function") onMouseLeave(synthetic);
       break;
     }
+    case "wheel": {
+      const onWheel = props.onWheel;
+      if (typeof onWheel === "function") onWheel(synthetic);
+      break;
+    }
+    case "scroll": {
+      const onScroll = props.onScroll;
+      if (typeof onScroll === "function") onScroll(synthetic);
+      break;
+    }
+  }
+}
+
+/**
+ * Root-scoped event dispatcher called from Rust (via events.ts host bridge).
+ * Bubbling events walk `parentId` until `stopPropagation()` or the root.
+ */
+export function dispatchEvent(
+  rootId: string,
+  nodeId: number,
+  event: string,
+  data?: HostEventData
+) {
+  const target = lookupInstance(rootId, nodeId);
+  if (!target) {
+    log("Dispatch event: instance not found", rootId, nodeId);
+    return;
+  }
+
+  log("Dispatch event", event, "rootId:", rootId, "nodeId:", nodeId, data);
+
+  if (!("props" in target) || !target.props) {
+    return;
+  }
+
+  const bubbles = BUBBLING_EVENTS.has(event);
+  const state = { stopped: false };
+  const payload =
+    data && typeof data === "object" ? { ...(data as object) } : {};
+
+  let currentId: number | undefined = nodeId;
+  while (currentId !== undefined) {
+    const instance = lookupInstance(rootId, currentId);
+    if (!instance || !("props" in instance) || !instance.props) {
+      break;
+    }
+
+    const synthetic: Record<string, unknown> = {
+      ...payload,
+      type: event,
+      target: nodeId,
+      currentTarget: currentId,
+      stopPropagation: () => {
+        state.stopped = true;
+      },
+    };
+
+    invokeHandler(instance.props, event, synthetic);
+
+    if (!bubbles || state.stopped) {
+      break;
+    }
+
+    currentId =
+      "parentId" in instance
+        ? (instance as BevyInstance).parentId
+        : undefined;
   }
 }
 
@@ -242,9 +286,35 @@ export function dispatchEvent(
  * Host config for react-reconciler.
  * Using 'any' to avoid complex type gymnastics with react-reconciler's evolving API.
  */
+/**
+ * Optional instance lookup injected by roots.ts to avoid a circular import.
+ * Falls back to scanning nothing when unset (tests that construct a reconciler
+ * directly pass `instanceMap` on the host config instead).
+ */
+let instanceLookup:
+  | ((rootId: string, nodeId: number) => PublicInstance | undefined)
+  | null = null;
+
+export function setInstanceLookup(
+  fn: (rootId: string, nodeId: number) => PublicInstance | undefined
+): void {
+  instanceLookup = fn;
+}
+
+function lookupInstance(
+  rootId: string,
+  nodeId: number
+): PublicInstance | undefined {
+  return instanceLookup?.(rootId, nodeId);
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 class BevyHostConfig {
   constructor(readonly props: ReconcilerProps) {}
+
+  get instanceMap(): BevyInstanceMap {
+    return this.props.instanceMap;
+  }
 
   // -------------------
   // Core Configuration
@@ -265,13 +335,14 @@ class BevyHostConfig {
   cancelTimeout = clearTimeout;
   getCurrentEventPriority = () => 16;
 
-  getInstanceFromNode = (nodeId: number) => instanceMap.get(nodeId) || null;
+  getInstanceFromNode = (nodeId: number) =>
+    this.instanceMap.get(nodeId) || null;
   beforeActiveInstanceBlur = () => {};
   afterActiveInstanceBlur = () => {};
   prepareScopeUpdate = () => {};
   getInstanceFromScope = () => null;
   detachDeletedInstance = (instance: Instance | TextInstance) => {
-    instanceMap.delete(instance.nodeId);
+    this.instanceMap.delete(instance.nodeId);
     // Host text nodes skip detachDeletedInstance in react-reconciler;
     // host components land here. Destroy is also called from removeChild
     // so this is safe if the entity was already despawned.
@@ -306,7 +377,7 @@ class BevyHostConfig {
       children: [],
     };
     
-    instanceMap.set(nodeId, instance);
+    this.instanceMap.set(nodeId, instance);
     return instance;
   }
 
@@ -322,7 +393,7 @@ class BevyHostConfig {
       text,
     };
 
-    instanceMap.set(nodeId, instance);
+    this.instanceMap.set(nodeId, instance);
     return instance;
   }
 
@@ -385,6 +456,7 @@ class BevyHostConfig {
     __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
 
     if ("children" in parent && "type" in child) {
+      (child as Instance).parentId = parent.nodeId;
       parent.children.push(child as Instance);
     }
   }
@@ -393,6 +465,7 @@ class BevyHostConfig {
     __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
 
     if ("children" in parent && "type" in child) {
+      (child as Instance).parentId = parent.nodeId;
       parent.children.push(child as Instance);
     }
   }
@@ -402,6 +475,9 @@ class BevyHostConfig {
     child: Instance | TextInstance
   ): void => {
     __react_append_child(this.props.rootId, container.rootId, child.nodeId);
+    if ("type" in child) {
+      (child as Instance).parentId = undefined;
+    }
   }
 
   removeChild = (parent: Instance, child: Instance | TextInstance): void => {
@@ -409,7 +485,10 @@ class BevyHostConfig {
     // Despawn now: HostText never gets detachDeletedInstance, and destroying
     // here also covers host components (detachDeletedInstance is then a no-op).
     __react_destroy_node(this.props.rootId, child.nodeId);
-    instanceMap.delete(child.nodeId);
+    this.instanceMap.delete(child.nodeId);
+    if ("type" in child) {
+      delete (child as Instance).parentId;
+    }
     if ("children" in parent) {
       const idx = parent.children.findIndex((c) => c.nodeId === child.nodeId);
       if (idx !== -1) {
@@ -424,7 +503,7 @@ class BevyHostConfig {
   ): void => {
     __react_remove_child(this.props.rootId, container.rootId, child.nodeId);
     __react_destroy_node(this.props.rootId, child.nodeId);
-    instanceMap.delete(child.nodeId);
+    this.instanceMap.delete(child.nodeId);
   }
 
   insertBefore = (
@@ -435,6 +514,7 @@ class BevyHostConfig {
     __react_insert_before(this.props.rootId, parent.nodeId, child.nodeId, beforeChild.nodeId);
 
     if ("children" in parent && "type" in child) {
+      (child as Instance).parentId = parent.nodeId;
       // Remove if already present
       const existingIdx = parent.children.findIndex((c) => c.nodeId === child.nodeId);
       if (existingIdx !== -1) {
@@ -517,7 +597,8 @@ class BevyHostConfig {
 
 type ReconcilerProps = {
   rootId: string;
-}
+  instanceMap: BevyInstanceMap;
+};
 
 /**
  * Create the reconciler instance

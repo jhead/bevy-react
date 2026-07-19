@@ -39,17 +39,19 @@ No XAML/XML markup, no two-way data binding, no full browser, no IMGUI architect
 
 Ranked by DX leverage. Status updated after the bridge-first parallel landing.
 
-### 1. Typed game-state bridge — *partial* (MVP landed)
+### 1. Typed game-state bridge — *done* (MVP; polish open)
 
-Named resource stores + Promise-returning calls ship; query subscriptions and codegen remain.
+Named resource/query stores, Promise calls, HUD ts-rs codegen, and typed command wrappers ship.
 
 - [x] Rust: register resources as subscribable stores (`register_resource_store`)
 - [x] Per-frame batched dirty notifications (store sync in `flush_react_bridge`)
 - [x] TS: `useResource` + selector hooks (`useBridgeState` selector)
-- [ ] TS: `useQuery` for entity/component subscriptions
-- [ ] Codegen TS types from Rust (ts-rs / specta) — hand-written parallel types in HUD for now
+- [x] TS: `useQuery` for entity/component subscriptions (`register_query_store` / `mark_query_dirty`)
+- [x] Codegen TS types from Rust (`bridge-codegen` + ts-rs; HUD `PlayerStats`)
 - [x] Typed command return values to JS (`callNative` → Promise)
-- [ ] Generated typed command wrappers from `register` metadata
+- [x] Generated typed command wrappers (`BridgeCommandMeta` → HUD `addScore` / `heal`)
+- [ ] Auto-derive command meta from `register` closures (manual meta today)
+- [ ] Spread codegen beyond HUD / shared package types
 
 ### 2. Host-side interaction styling + transitions — *done* (MVP)
 
@@ -74,22 +76,24 @@ Host owns Slider/Checkbox interaction; Bevy Slider drag remains horizontal-only 
 - [x] Stable `ref` → `Entity` handle (`useEntityRef` / `__react_entity_id` → `Entity::to_bits`)
 - [x] `<Node components={[...]}>` with Rust bundles registered by name (`BundleRegistry`)
 
-### 5. Fail loudly in-game — *partial* (overlay landed)
+### 5. Fail loudly in-game — *done* (MVP; Boa limits)
 
 - [x] In-game error overlay (Dismiss / Esc)
 - [x] Warnings for unsupported style props
-- [ ] Reliable source-mapped stacks (best-effort today; Boa often lacks `url:line:col`)
+- [x] Source-mapped stacks when frames have `url:line:col` (Vite maps, `sourceMappingURL`, CallFrame positions)
+- [ ] Symbolicate bare VM frame names with no path (Boa platform limit)
 
-### 6. Devtools over designer tools — *partial* (MVP)
+### 6. Devtools over designer tools — *done* (MVP; not drop-in RDT)
 
-Skip a visual designer. Full standalone React DevTools protocol still future work.
+Skip a visual designer. `:8098` is an RDT-shaped inspector bridge, not `npx react-devtools` on `:8097`.
 
-- [x] Debug WebSocket bridge (`:8098` tree + ecs_map dump)
-- [ ] Full `react-devtools` / `react-devtools-core` backend over Boa
+- [x] Debug WebSocket bridge (`:8098` tree + ecs_map + fiber dump)
+- [x] RDT-shaped `{ event, payload }` messages (fiber operations snapshot)
 - [x] Optional bevy-egui inspector for node ↔ entity mapping (`egui` / `devtools-full` features)
 - [x] Component gallery example (`examples/gallery`)
+- [ ] Drop-in `react-devtools-core` / Chrome extension on `:8097` (blocked by Boa init order + Int32 ops codec)
 
-### 7. Binary op protocol — *partial* (MVP codec)
+### 7. Binary op protocol — *partial* (codec; reconciler not default)
 
 Fabric-style binary ops. Schema + Rust round-trip codec landed; reconciler still uses enum natives by default.
 

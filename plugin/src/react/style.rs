@@ -39,8 +39,7 @@ impl<'de> Deserialize<'de> for CssValue {
 
 /// A CSS scalar where bare numbers keep their numeric form (no implied `px`).
 /// Used for `aspectRatio`, `lineHeight`, `opacity`, etc.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct CssScalar(pub String);
 
 

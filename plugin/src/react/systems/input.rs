@@ -40,6 +40,7 @@ pub struct PreviousInteraction(pub Interaction);
 const SCROLL_LINE_HEIGHT: f32 = 20.0;
 
 /// Handle UI interactions and enqueue events for the native JS dispatcher
+#[allow(clippy::type_complexity)]
 pub fn handle_input_interactions(
     mut query: Query<(
         &Interaction,
@@ -165,6 +166,7 @@ pub fn handle_click_outside_blur(
 
 /// Apply mouse-wheel deltas to `overflow: scroll` nodes via [`ScrollPosition`],
 /// and enqueue `wheel` / `scroll` events for the hovered React subtree.
+#[allow(clippy::too_many_arguments)]
 pub fn handle_wheel_scroll(
     mut mouse_wheel_reader: MessageReader<MouseWheel>,
     hover_map: Res<HoverMap>,

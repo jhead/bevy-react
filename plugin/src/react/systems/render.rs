@@ -581,3 +581,203 @@ fn handle_clear_container(commands: &mut Commands, context: &mut ReactContext) {
     }
     log::debug!("Cleared container: despawned all nodes");
 }
+
+fn apply_visual_style(entity_commands: &mut EntityCommands, style_props: &StyleProps) {
+    match style_props.background_color.as_deref().and_then(parse_color) {
+        Some(mut color) => {
+            if let Some(opacity) = style_opacity(style_props) {
+                color.set_alpha(opacity);
+            }
+            entity_commands.insert(BackgroundColor(color));
+        }
+        None => {
+            // Opacity without an explicit background still needs a carrier color.
+            if let Some(opacity) = style_opacity(style_props) {
+                let mut color = Color::WHITE;
+                color.set_alpha(opacity);
+                entity_commands.insert(BackgroundColor(color));
+            }
+        }
+    }
+
+    if let Some(border_color) = style_to_border_color(style_props) {
+        entity_commands.insert(border_color);
+    }
+    if let Some(radius) = style_to_border_radius(style_props) {
+        entity_commands.insert(radius);
+    }
+    if let Some(shadow) = style_to_box_shadow(style_props) {
+        entity_commands.insert(shadow);
+    }
+    if let Some(gradient) = style_to_background_gradient(style_props) {
+        entity_commands.insert(gradient);
+    }
+    if let Some(d) = style_props.display.as_deref()
+        && d.eq_ignore_ascii_case("none")
+    {
+        entity_commands.insert(Visibility::Hidden);
+    }
+}
+
+fn apply_visual_style_commands(commands: &mut Commands, entity: Entity, style_props: &StyleProps) {
+    match style_props.background_color.as_deref().and_then(parse_color) {
+        Some(mut color) => {
+            if let Some(opacity) = style_opacity(style_props) {
+                color.set_alpha(opacity);
+            }
+            commands.entity(entity).insert(BackgroundColor(color));
+        }
+        None => {
+            if style_opacity(style_props).is_none() {
+                commands.entity(entity).remove::<BackgroundColor>();
+            } else if let Some(opacity) = style_opacity(style_props) {
+                let mut color = Color::WHITE;
+                color.set_alpha(opacity);
+                commands.entity(entity).insert(BackgroundColor(color));
+            }
+        }
+    }
+
+    match style_to_border_color(style_props) {
+        Some(border_color) => {
+            commands.entity(entity).insert(border_color);
+        }
+        None => {
+            commands.entity(entity).remove::<BorderColor>();
+        }
+    }
+    match style_to_border_radius(style_props) {
+        Some(radius) => {
+            commands.entity(entity).insert(radius);
+        }
+        None => {
+            commands.entity(entity).remove::<BorderRadius>();
+        }
+    }
+    match style_to_box_shadow(style_props) {
+        Some(shadow) => {
+            commands.entity(entity).insert(shadow);
+        }
+        None => {
+            commands.entity(entity).remove::<BoxShadow>();
+        }
+    }
+    match style_to_background_gradient(style_props) {
+        Some(gradient) => {
+            commands.entity(entity).insert(gradient);
+        }
+        None => {
+            commands.entity(entity).remove::<BackgroundGradient>();
+        }
+    }
+
+    match style_props.display.as_deref() {
+        Some(d) if d.eq_ignore_ascii_case("none") => {
+            commands.entity(entity).insert(Visibility::Hidden);
+        }
+        _ => {
+            commands.entity(entity).remove::<Visibility>();
+        }
+    }
+}
+
+fn apply_text_style(
+    cmd: &mut EntityCommands,
+    style_props: &StyleProps,
+    asset_server: &AssetServer,
+) {
+    if let Some(ref color_str) = style_props.color
+        && let Some(mut color) = parse_color(color_str)
+    {
+        if let Some(opacity) = style_opacity(style_props) {
+            color.set_alpha(opacity);
+        }
+        cmd.insert(TextColor(color));
+    }
+
+    let mut text_font = TextFont::default();
+    let mut has_font = false;
+    if let Some(ref font_size) = style_props.font_size
+        && let Val::Px(px) = parse_val(&font_size.0)
+    {
+        text_font.font_size = px;
+        has_font = true;
+    }
+    if let Some(ref family) = style_props.font_family
+        && let Some(path) = parse_font_family(family)
+    {
+        text_font.font = asset_server.load(path);
+        has_font = true;
+    }
+    if let Some(ref line_height) = style_props.line_height
+        && let Some(lh) = parse_line_height(&line_height.0)
+    {
+        text_font.line_height = lh;
+        has_font = true;
+    }
+    if has_font {
+        cmd.insert(text_font);
+    }
+
+    if let Some(ref align) = style_props.text_align
+        && let Some(justify) = parse_text_align(align)
+    {
+        cmd.insert(TextLayout::new_with_justify(justify));
+    }
+}
+
+fn apply_text_style_commands(
+    commands: &mut Commands,
+    entity: Entity,
+    style_props: &StyleProps,
+    asset_server: &AssetServer,
+) {
+    match style_props.color.as_deref().and_then(parse_color) {
+        Some(mut color) => {
+            if let Some(opacity) = style_opacity(style_props) {
+                color.set_alpha(opacity);
+            }
+            commands.entity(entity).insert(TextColor(color));
+        }
+        None => {
+            commands.entity(entity).remove::<TextColor>();
+        }
+    }
+
+    let mut text_font = TextFont::default();
+    let mut has_font = false;
+    if let Some(font_size) = style_props.font_size.as_ref()
+        && let Val::Px(px) = parse_val(&font_size.0)
+    {
+        text_font.font_size = px;
+        has_font = true;
+    }
+    if let Some(family) = style_props.font_family.as_ref()
+        && let Some(path) = parse_font_family(family)
+    {
+        text_font.font = asset_server.load(path);
+        has_font = true;
+    }
+    if let Some(line_height) = style_props.line_height.as_ref()
+        && let Some(lh) = parse_line_height(&line_height.0)
+    {
+        text_font.line_height = lh;
+        has_font = true;
+    }
+    if has_font {
+        commands.entity(entity).insert(text_font);
+    } else {
+        commands.entity(entity).remove::<TextFont>();
+    }
+
+    match style_props.text_align.as_deref().and_then(parse_text_align) {
+        Some(justify) => {
+            commands
+                .entity(entity)
+                .insert(TextLayout::new_with_justify(justify));
+        }
+        None => {
+            commands.entity(entity).remove::<TextLayout>();
+        }
+    }
+}

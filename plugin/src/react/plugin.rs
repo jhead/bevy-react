@@ -40,26 +40,18 @@ impl Plugin for ReactPlugin {
                 )
                     .chain(),
             )
-            // Nested chains: large flat tuples hit Curve::chain ambiguity in Bevy 0.17.
             .add_systems(
                 Update,
                 (
-                    (
-                        process_react_messages,
-                        handle_input_interactions,
-                        handle_click_outside_blur,
-                        handle_wheel_scroll,
-                    )
-                        .chain(),
-                    (
-                        apply_focus_requests,
-                        handle_keyboard_input,
-                        flush_react_events,
-                        inspect,
-                    )
-                        .chain(),
-                )
-                    .chain(),
+                    process_react_messages,
+                    handle_input_interactions,
+                    handle_click_outside_blur,
+                    handle_wheel_scroll,
+                    apply_focus_requests,
+                    handle_keyboard_input,
+                    flush_react_events,
+                    inspect,
+                ),
             );
 
         log::info!("React plugin configured");

@@ -51,7 +51,7 @@ mod shim;
 #[cfg(test)]
 mod message_tests;
 
-pub use plugin::ReactPlugin;
+pub use plugin::{ReactDefaultFontPlugin, ReactPlugin};
 pub use asset_source::{ReactAssetBundle, ReactAssetSource, ReactJsModule};
 pub use bridge::{
     BridgeCall, ReactBridge, flush_react_bridge, process_react_bridge_calls,

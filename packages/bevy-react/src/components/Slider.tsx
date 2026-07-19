@@ -89,7 +89,7 @@ export function Slider({
   return (
     <Node style={rowStyle}>
       <Button style={stepButtonStyle} onClick={() => adjust(-step)}>
-        <Text style={{ fontSize: 14, color: "#ffffff" }}>−</Text>
+        <Text style={{ fontSize: 14, color: "#ffffff" }}>-</Text>
       </Button>
       {/* Track — visual only until pointer-drag is wired */}
       <Node style={track}>

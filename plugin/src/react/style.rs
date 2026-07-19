@@ -190,6 +190,11 @@ pub struct StyleProps {
     pub image_slice: Option<String>,
     pub tint: Option<String>,
     pub tint_color: Option<String>,
+
+    /// CSS-like pointer hit testing: `"none"` | `"auto"`.
+    /// Maps to Bevy [`FocusPolicy`] + [`Pickable`] so transparent HUD roots can
+    /// pass clicks through to the world / map underneath.
+    pub pointer_events: Option<String>,
 }
 
 /// Parse props JSON into NodeProps
@@ -657,6 +662,31 @@ pub fn parse_font_family(value: &str) -> Option<String> {
 
 pub fn style_font_family(props: &StyleProps) -> Option<String> {
     props.font_family.as_deref().and_then(parse_font_family)
+}
+
+/// Resolved pointer-events mode for Bevy picking / UI focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerEvents {
+    /// Block and receive hits (default when unset).
+    Auto,
+    /// Ignore hits and do not block entities below (HUD pass-through).
+    None,
+}
+
+/// Parse CSS `pointer-events`: `"none"` | `"auto"`.
+pub fn parse_pointer_events(value: &str) -> Option<PointerEvents> {
+    match value.trim().to_lowercase().as_str() {
+        "none" => Some(PointerEvents::None),
+        "auto" => Some(PointerEvents::Auto),
+        _ => None,
+    }
+}
+
+pub fn style_pointer_events(props: &StyleProps) -> Option<PointerEvents> {
+    props
+        .pointer_events
+        .as_deref()
+        .and_then(parse_pointer_events)
 }
 
 /// Map CSS object-fit to Bevy NodeImageMode.
@@ -2218,5 +2248,16 @@ mod tests {
         assert!(style_tint(&tint_only).is_some());
         assert!((style_opacity(&props).unwrap() - 0.5).abs() < 0.001);
         assert_eq!(parse_opacity("75%"), Some(0.75));
+    }
+
+    #[test]
+    fn test_pointer_events() {
+        assert_eq!(parse_pointer_events("none"), Some(PointerEvents::None));
+        assert_eq!(parse_pointer_events("AUTO"), Some(PointerEvents::Auto));
+        assert!(parse_pointer_events("visiblePainted").is_none());
+
+        let props: StyleProps =
+            serde_json::from_str(r#"{"pointerEvents": "none"}"#).unwrap();
+        assert_eq!(style_pointer_events(&props), Some(PointerEvents::None));
     }
 }

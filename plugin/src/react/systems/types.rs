@@ -17,6 +17,21 @@ pub struct ReactNode {
 #[derive(Component)]
 pub struct ReactTextNode;
 
+/// Optional default font for a React root (used when `fontFamily` is unset).
+///
+/// Attach to the same entity as [`ReactRoot`]. Takes precedence over
+/// [`ReactDefaultFont`].
+#[derive(Component, Clone, Debug)]
+pub struct ReactRootFont(pub Handle<Font>);
+
+/// Optional plugin-wide default font when React text omits `fontFamily`.
+///
+/// Prefer a full TTF/OTF under your Bevy `assets/` folder. Bevy's built-in
+/// default font is a small FiraMono subset and will show tofu (□) for many
+/// glyphs (including Unicode minus `−`).
+#[derive(Resource, Clone, Default, Debug)]
+pub struct ReactDefaultFont(pub Option<Handle<Font>>);
+
 /// Marker component for the React UI root container
 #[derive(Component)]
 pub struct ReactRoot {

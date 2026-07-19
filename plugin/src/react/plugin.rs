@@ -15,6 +15,33 @@ use crate::react::hmr::{ReactReloadFlag, apply_react_hmr_reloads};
 use crate::react::native_functions::ReactJsExtension;
 use crate::react::systems::*;
 
+/// Loads an asset path into [`ReactDefaultFont`] at startup.
+///
+/// ```ignore
+/// App::new().add_plugins((ReactPlugin, ReactDefaultFontPlugin::new("fonts/FiraSans.ttf")));
+/// ```
+pub struct ReactDefaultFontPlugin {
+    path: String,
+}
+
+impl ReactDefaultFontPlugin {
+    pub fn new(path: impl Into<String>) -> Self {
+        Self { path: path.into() }
+    }
+}
+
+impl Plugin for ReactDefaultFontPlugin {
+    fn build(&self, app: &mut App) {
+        let path = self.path.clone();
+        app.init_resource::<ReactDefaultFont>().add_systems(
+            Startup,
+            move |mut fonts: ResMut<ReactDefaultFont>, asset_server: Res<AssetServer>| {
+                fonts.0 = Some(asset_server.load(path.clone()));
+            },
+        );
+    }
+}
+
 pub struct ReactPlugin;
 
 impl Plugin for ReactPlugin {
@@ -28,6 +55,7 @@ impl Plugin for ReactPlugin {
             .init_resource::<ReactEventQueue>()
             .init_resource::<ReactBridge>()
             .init_resource::<ReactReloadFlag>()
+            .init_resource::<ReactDefaultFont>()
             .add_message::<RequestReactFocus>()
             .add_message::<RequestReactBlur>()
             .add_observer(on_react_root_removed)
@@ -122,10 +150,5 @@ fn execute_react_scripts(
         context.root = Some(entity);
         root_map.roots.insert(root.id.clone(), entity);
         commands.entity(entity).remove::<ReactDirtyFlag>();
-
-        log::info!(
-            "Executed script: {}",
-            &script.source_string[..100.min(script.source_string.len())]
-        );
     }
 }

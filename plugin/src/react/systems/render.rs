@@ -1,11 +1,13 @@
 use bevy::prelude::*;
 use bevy::text::TextLayout;
+use bevy::ui::FocusPolicy;
 
 use crate::react::client::ReactClientProto;
 use crate::react::style::{
     json_to_style, parse_color, parse_props, parse_val, style_font_family, style_line_height,
-    style_object_fit, style_opacity, style_text_align, style_tint, style_to_background_gradient,
-    style_to_border_color, style_to_border_radius, style_to_box_shadow, StyleProps,
+    style_object_fit, style_opacity, style_pointer_events, style_text_align, style_tint,
+    style_to_background_gradient, style_to_border_color, style_to_border_radius,
+    style_to_box_shadow, PointerEvents, StyleProps,
 };
 use crate::react::systems::types::*;
 
@@ -15,12 +17,16 @@ pub fn process_react_messages(
     receiver: Option<Res<ReactMessageReceiver>>,
     asset_server: Res<AssetServer>,
     root_map: Res<ReactRootMap>,
+    default_font: Option<Res<ReactDefaultFont>>,
+    root_fonts: Query<&ReactRootFont>,
     mut contexts: Query<(Entity, Mut<ReactContext>)>,
     text_nodes: Query<(), With<ReactTextNode>>,
 ) {
     let Some(receiver) = receiver else {
         return;
     };
+
+    let plugin_default = default_font.and_then(|f| f.0.clone());
 
     // Process all pending messages
     while let Some(message) = receiver.0.try_recv() {
@@ -38,11 +44,13 @@ pub fn process_react_messages(
                 let Ok((_, mut context)) = contexts.get_mut(*root) else {
                     continue;
                 };
+                let fallback_font = resolve_fallback_font(*root, &root_fonts, &plugin_default);
 
                 handle_create_node(
                     &mut commands,
                     context.as_mut(),
                     &asset_server,
+                    fallback_font.as_ref(),
                     node_id,
                     &node_type,
                     &props_json,
@@ -60,8 +68,15 @@ pub fn process_react_messages(
                 let Ok((_, mut context)) = contexts.get_mut(*root) else {
                     continue;
                 };
+                let fallback_font = resolve_fallback_font(*root, &root_fonts, &plugin_default);
 
-                handle_create_text(&mut commands, context.as_mut(), node_id, &content);
+                handle_create_text(
+                    &mut commands,
+                    context.as_mut(),
+                    fallback_font.as_ref(),
+                    node_id,
+                    &content,
+                );
             }
 
             ReactClientProto::AppendChild {
@@ -117,11 +132,13 @@ pub fn process_react_messages(
                     .get(&node_id)
                     .map(|entity| text_nodes.get(*entity).is_ok())
                     .unwrap_or(false);
+                let fallback_font = resolve_fallback_font(*root, &root_fonts, &plugin_default);
 
                 handle_update_node(
                     &mut commands,
                     context.as_mut(),
                     &asset_server,
+                    fallback_font.as_ref(),
                     node_id,
                     &props_json,
                     is_text,
@@ -197,11 +214,24 @@ pub fn process_react_messages(
     }
 }
 
+fn resolve_fallback_font(
+    root: Entity,
+    root_fonts: &Query<&ReactRootFont>,
+    plugin_default: &Option<Handle<Font>>,
+) -> Option<Handle<Font>> {
+    root_fonts
+        .get(root)
+        .ok()
+        .map(|f| f.0.clone())
+        .or_else(|| plugin_default.clone())
+}
+
 /// Create a new UI node
 fn handle_create_node(
     commands: &mut Commands,
     context: &mut ReactContext,
     asset_server: &AssetServer,
+    fallback_font: Option<&Handle<Font>>,
     node_id: u64,
     node_type: &str,
     props_json: &str,
@@ -249,7 +279,12 @@ fn handle_create_node(
 
             // Apply text styling
             if let Some(ref style_props) = props.style {
-                apply_text_style(&mut cmd, style_props, asset_server);
+                apply_text_style(&mut cmd, style_props, asset_server, fallback_font);
+            } else if let Some(font) = fallback_font {
+                cmd.insert(TextFont {
+                    font: font.clone(),
+                    ..default()
+                });
             }
 
             cmd
@@ -303,16 +338,22 @@ fn handle_create_node(
 fn handle_create_text(
     commands: &mut Commands,
     context: &mut ReactContext,
+    fallback_font: Option<&Handle<Font>>,
     node_id: u64,
     content: &str,
 ) {
-    let entity = commands
-        .spawn((
-            Text::new(content.to_string()),
-            ReactNode { node_id },
-            ReactTextNode,
-        ))
-        .id();
+    let mut cmd = commands.spawn((
+        Text::new(content.to_string()),
+        ReactNode { node_id },
+        ReactTextNode,
+    ));
+    if let Some(font) = fallback_font {
+        cmd.insert(TextFont {
+            font: font.clone(),
+            ..default()
+        });
+    }
+    let entity = cmd.id();
 
     context.nodes.insert(node_id, entity);
     log::debug!("Created text node: id={} entity={:?} text={}", node_id, entity, content);
@@ -378,6 +419,7 @@ fn handle_update_node(
     commands: &mut Commands,
     context: &ReactContext,
     asset_server: &AssetServer,
+    fallback_font: Option<&Handle<Font>>,
     node_id: u64,
     props_json: &str,
     is_text: bool,
@@ -396,12 +438,28 @@ fn handle_update_node(
         }
         match props.style.as_ref() {
             Some(style_props) => {
-                apply_text_style_commands(commands, entity, style_props, asset_server);
+                apply_text_style_commands(
+                    commands,
+                    entity,
+                    style_props,
+                    asset_server,
+                    fallback_font,
+                );
             }
             None => {
                 commands.entity(entity).remove::<TextColor>();
-                commands.entity(entity).remove::<TextFont>();
                 commands.entity(entity).remove::<TextLayout>();
+                match fallback_font {
+                    Some(font) => {
+                        commands.entity(entity).insert(TextFont {
+                            font: font.clone(),
+                            ..default()
+                        });
+                    }
+                    None => {
+                        commands.entity(entity).remove::<TextFont>();
+                    }
+                }
             }
         }
         log::debug!("Updated text node: id={}", node_id);
@@ -434,6 +492,8 @@ fn handle_update_node(
             commands.entity(entity).remove::<BackgroundGradient>();
             commands.entity(entity).remove::<ZIndex>();
             commands.entity(entity).remove::<Visibility>();
+            commands.entity(entity).remove::<Pickable>();
+            commands.entity(entity).remove::<FocusPolicy>();
         }
     }
 
@@ -647,6 +707,44 @@ fn apply_visual_style(entity_commands: &mut EntityCommands, style_props: &StyleP
     {
         entity_commands.insert(Visibility::Hidden);
     }
+
+    apply_pointer_events(entity_commands, style_props);
+}
+
+fn apply_pointer_events(entity_commands: &mut EntityCommands, style_props: &StyleProps) {
+    match style_pointer_events(style_props) {
+        Some(PointerEvents::None) => {
+            entity_commands.insert(Pickable::IGNORE);
+            entity_commands.insert(FocusPolicy::Pass);
+        }
+        Some(PointerEvents::Auto) => {
+            // Explicit auto: restore default blocking / hoverable behavior.
+            entity_commands.remove::<Pickable>();
+            entity_commands.insert(FocusPolicy::Block);
+        }
+        None => {}
+    }
+}
+
+fn apply_pointer_events_commands(
+    commands: &mut Commands,
+    entity: Entity,
+    style_props: &StyleProps,
+) {
+    match style_pointer_events(style_props) {
+        Some(PointerEvents::None) => {
+            commands.entity(entity).insert(Pickable::IGNORE);
+            commands.entity(entity).insert(FocusPolicy::Pass);
+        }
+        Some(PointerEvents::Auto) => {
+            commands.entity(entity).remove::<Pickable>();
+            commands.entity(entity).insert(FocusPolicy::Block);
+        }
+        None => {
+            commands.entity(entity).remove::<Pickable>();
+            commands.entity(entity).remove::<FocusPolicy>();
+        }
+    }
 }
 
 fn apply_visual_style_commands(commands: &mut Commands, entity: Entity, style_props: &StyleProps) {
@@ -709,12 +807,15 @@ fn apply_visual_style_commands(commands: &mut Commands, entity: Entity, style_pr
             commands.entity(entity).remove::<Visibility>();
         }
     }
+
+    apply_pointer_events_commands(commands, entity, style_props);
 }
 
 fn apply_text_style(
     cmd: &mut EntityCommands,
     style_props: &StyleProps,
     asset_server: &AssetServer,
+    fallback_font: Option<&Handle<Font>>,
 ) {
     if let Some(ref color_str) = style_props.color
         && let Some(mut color) = parse_color(color_str)
@@ -736,6 +837,9 @@ fn apply_text_style(
     if let Some(path) = style_font_family(style_props) {
         text_font.font = asset_server.load(path);
         has_font = true;
+    } else if let Some(font) = fallback_font {
+        text_font.font = font.clone();
+        has_font = true;
     }
     if let Some(lh) = style_line_height(style_props) {
         text_font.line_height = lh;
@@ -755,6 +859,7 @@ fn apply_text_style_commands(
     entity: Entity,
     style_props: &StyleProps,
     asset_server: &AssetServer,
+    fallback_font: Option<&Handle<Font>>,
 ) {
     match style_props.color.as_deref().and_then(parse_color) {
         Some(mut color) => {
@@ -778,6 +883,9 @@ fn apply_text_style_commands(
     }
     if let Some(path) = style_font_family(style_props) {
         text_font.font = asset_server.load(path);
+        has_font = true;
+    } else if let Some(font) = fallback_font {
+        text_font.font = font.clone();
         has_font = true;
     }
     if let Some(lh) = style_line_height(style_props) {

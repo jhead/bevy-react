@@ -120,11 +120,18 @@ export interface BevyStyle {
   // Text (also used on Text style)
   color?: string;
   fontSize?: string | number;
-  /** Font asset path (e.g. `"fonts/FiraSans.ttf"`). Generic families ignored. */
+  /** Font asset path (e.g. `"fonts/FiraSans.ttf"`). Generic CSS families ignored. */
   fontFamily?: string;
   textAlign?: "left" | "right" | "center" | "justify" | "start" | "end";
   /** Unitless multiplier or `"24px"`. */
   lineHeight?: string | number;
+
+  /**
+   * Pointer hit testing for full-screen / transparent HUD roots.
+   * `"none"` → Bevy `Pickable::IGNORE` + `FocusPolicy::Pass` (clicks reach the world).
+   * `"auto"` → restore default blocking (omit for default).
+   */
+  pointerEvents?: "none" | "auto";
 
   // Image
   objectFit?: "fill" | "contain" | "cover" | "none" | "scale-down" | "stretch" | "auto";

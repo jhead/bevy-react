@@ -33,11 +33,11 @@ Remaining structural gaps: Epic 1 multi-root checkbox still open (TS largely don
 
 - [x] Replace `eval`-based dispatch with a native event queue + registered JS callback (`ReactEventQueue` / `__react_flush_events`).
 - [x] Dispatch distinct `onPress`/`onRelease` plus click with cursor position data.
- - [x] Add keyup, key modifiers (shift/ctrl/alt), and logical `Key` (TextInput no longer uses US-layout `keyCodeToChar`).
- - [x] Add wheel/scroll events and wire `overflow: scroll` to `ScrollPosition` (lazy `ScrollPosition` insert on wheel; HoverMap + ancestor walk).
- - [x] Proper focus management: Tab/arrow navigation, click-outside blur, and Bevy `RequestReactFocus`/`RequestReactBlur` messages. (JS `__react_request_focus` bridge not wired — needs native_functions.)
- - [x] Event bubbling/propagation semantics (`stopPropagation` on bubbled click/press/release/key/wheel/scroll via `parentId` chain).
- - [ ] Gamepad/directional UI navigation (skipped for now — `bevy_input_focus` needs TabGroup/`InputFocus` integration beyond current `Focusable`/`Button` tab order).
+- [x] Add keyup, key modifiers (shift/ctrl/alt), and logical `Key` (TextInput no longer uses US-layout `keyCodeToChar`).
+- [x] Add wheel/scroll events and wire `overflow: scroll` to `ScrollPosition` (lazy `ScrollPosition` insert on wheel; HoverMap + ancestor walk).
+- [x] Proper focus management: Tab/arrow navigation, click-outside blur, Bevy `RequestReactFocus`/`RequestReactBlur`, and JS `__react_request_focus`/`__react_request_blur`.
+- [x] Event bubbling/propagation semantics (`stopPropagation` on bubbled click/press/release/key/wheel/scroll via `parentId` chain).
+- [ ] Gamepad/directional UI navigation (skipped for now — `bevy_input_focus` needs TabGroup/`InputFocus` integration beyond current `Focusable`/`Button` tab order).
 
 ## Epic 4: Built-in components
 

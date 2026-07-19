@@ -80,12 +80,12 @@ Remaining gaps: style coverage still missing text shadow / line-break and image 
 
 - [ ] Publish `bevy_react` to crates.io and `bevy-react` to npm with locked version pairing.
 - [x] Write real docs: README rewrite, getting-started, supported style props table, architecture notes, CONTRIBUTING, CHANGELOG. (rustdoc still thin.)
-- [x] Ship 2–3 more examples: menu screen + forms/settings panel landed (`examples/menu`, `examples/forms`). HUD with game-state binding still waits on the data bridge.
+- [x] Ship 2–3 more examples: menu screen + forms/settings panel landed (`examples/menu`, `examples/forms`). HUD with game-state binding still TODO (bridge exists; example not yet).
 - [x] Rust↔React data bridge: a supported way to push game state into React (context/store fed from ECS) and call registered Rust functions from JS.
 - [ ] Bevy version support policy and a tracking matrix (currently pinned to 0.17.3).
-- [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until Epic 2 leftovers, Epic 4 TextInput depth, data bridge, and Epic 7 e2e land.
+- [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until Epic 2 leftovers and Epic 7 e2e land.
 
-Rough priority for remaining work: **Epic A** (manual demo smoke) → Epic 2 leftovers (text shadow / line-break, atlas/slice) → deepen Epic 4/7 → data bridge (Epic 8) → publish.
+Rough priority for remaining work: **Epic A** (manual demo smoke) → Epic 2 leftovers (text shadow / line-break, atlas/slice) → Epic 7 e2e / HUD example → publish.
 
 ## Verification backlog (Epic A — from mid-stream review)
 

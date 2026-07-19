@@ -23,6 +23,7 @@ use crate::js::client::WasmContext;
 /// Commands that can be sent to the JS engine.
 pub enum JsCommand {
     LoadEsmModule { name: String, source: String },
+    ClearEsmModuleCache,
     Execute { source: String },
     RegisterExtension { extension: Arc<Box<dyn JsEngineExtension>> },
     FlushEventLoop,

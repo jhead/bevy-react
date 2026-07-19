@@ -12,6 +12,11 @@ mod client;
 mod websocket;
 mod esm;
 mod builder;
+mod error_report;
+mod console_log;
+mod host_hooks;
+#[cfg(feature = "fetch")]
+mod fetch_api;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine::{JsEngine, JsCommand};
@@ -19,5 +24,6 @@ pub use engine::{JsEngine, JsCommand};
 pub use engine_wasm::{JsEngine, JsCommand};
 pub use client::JsEngineClient;
 pub use builder::{JsEngineBuilder, JsEngineExtension};
+pub use error_report::{JsErrorRecord, JsErrorReporter, JsErrorSource};
 #[cfg(feature = "websocket")]
 pub use websocket::*;

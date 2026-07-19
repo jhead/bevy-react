@@ -6,6 +6,7 @@ use std::sync::Mutex;
 #[cfg(target_arch = "wasm32")]
 use std::collections::VecDeque;
 
+use crate::js::error_report::JsErrorReporter;
 use crate::js::{JsCommand, JsEngineExtension};
 
 /// WASM: wraps `boa_engine::Context` to satisfy `Send + Sync` bounds required by `Arc<Mutex<T>>`.
@@ -39,9 +40,17 @@ pub struct JsEngineClient {
     /// flush don't deadlock — they lock this queue, not the context.
     #[cfg(target_arch = "wasm32")]
     pub(crate) queue: Arc<Mutex<VecDeque<JsCommand>>>,
+
+    /// Shared sink for console / uncaught / script errors (polled into Bevy).
+    pub(crate) reporter: JsErrorReporter,
 }
 
 impl JsEngineClient {
+    /// Access the shared error reporter (console, rejections, script/module failures).
+    pub fn error_reporter(&self) -> &JsErrorReporter {
+        &self.reporter
+    }
+
     /// Flush the JS event loop — called every Bevy frame by `tick_js_engine`.
     ///
     /// On native, signals the JS thread to run Boa's job queue.
@@ -50,7 +59,7 @@ impl JsEngineClient {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn flush_event_loop(&self) {
         if let Err(e) = self.sender.send(JsCommand::FlushEventLoop) {
-            log::warn!("Failed to send flush event loop command: {}", e);
+            log::warn!("Failed to send flush event loop command: {e}");
         }
     }
 
@@ -69,7 +78,7 @@ impl JsEngineClient {
                 for cmd in commands {
                     wasm::process_command(&mut ctx.0, cmd, self);
                 }
-                wasm::flush_jobs(&mut ctx.0);
+                wasm::flush_jobs(&mut ctx.0, self);
             }
         }
     }
@@ -81,7 +90,7 @@ impl JsEngineClient {
             name: name.into(),
             source: source.into(),
         }) {
-            log::error!("Failed to send load ESM module command: {}", e);
+            log::error!("Failed to send load ESM module command: {e}");
         }
     }
 
@@ -93,13 +102,29 @@ impl JsEngineClient {
         });
     }
 
+    /// Drop all cached ESM modules so the next import re-fetches / re-parses.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn clear_esm_module_cache(&self) {
+        if let Err(e) = self.sender.send(JsCommand::ClearEsmModuleCache) {
+            log::error!("Failed to send clear ESM module cache command: {e}");
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn clear_esm_module_cache(&self) {
+        self.queue
+            .lock()
+            .unwrap()
+            .push_back(JsCommand::ClearEsmModuleCache);
+    }
+
     /// Execute a JS script.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn execute(&self, source: impl Into<String>) {
         if let Err(e) = self.sender.send(JsCommand::Execute {
             source: source.into(),
         }) {
-            log::error!("Failed to send execute command: {}", e);
+            log::error!("Failed to send execute command: {e}");
         }
     }
 
@@ -115,7 +140,7 @@ impl JsEngineClient {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn register_extension(&self, extension: Arc<Box<dyn JsEngineExtension>>) {
         if let Err(e) = self.sender.send(JsCommand::RegisterExtension { extension }) {
-            log::error!("Failed to send register extension command: {}", e);
+            log::error!("Failed to send register extension command: {e}");
         }
     }
 
@@ -150,6 +175,7 @@ impl JsEngineClient {
 mod wasm {
     use boa_engine::{Context, Module, Source};
     use crate::js::JsCommand;
+    use crate::js::error_report::{JsErrorSource, format_js_error};
     use crate::js::esm::FetchModuleLoader;
     use super::JsEngineClient;
 
@@ -164,47 +190,63 @@ mod wasm {
                 log::info!("Executing script ({} bytes)...", source.len());
                 let src = Source::from_bytes(source.as_bytes());
                 if let Err(e) = context.eval(src) {
-                    log::error!("Failed to execute script: {:?}", e);
+                    let (message, stack) = format_js_error(&e, context);
+                    client.reporter.report_message(
+                        JsErrorSource::Script,
+                        message,
+                        stack,
+                    );
                 }
-                flush_jobs(context);
+                flush_jobs(context, client);
             }
             JsCommand::LoadEsmModule { name, source } => {
-                log::info!("Loading ES module {} ({} bytes)...", name, source.len());
+                log::info!("Loading ES module {name} ({} bytes)...", source.len());
                 let src = Source::from_bytes(source.as_bytes());
                 match Module::parse(src, None, context) {
                     Ok(module) => {
                         let _promise = module.load_link_evaluate(context);
                         if let Some(loader) = context.downcast_module_loader::<FetchModuleLoader>() {
-                            log::info!("Registering ESM module: {}", name);
+                            log::info!("Registering ESM module: {name}");
                             loader.insert(name, module);
                         }
                     }
-                    Err(e) => log::error!("Failed to parse ESM module {}: {:?}", name, e),
+                    Err(e) => {
+                        let (message, stack) = format_js_error(&e, context);
+                        client.reporter.report_message(
+                            JsErrorSource::ModuleLoad,
+                            format!("Failed to parse ESM module {name}: {message}"),
+                            stack,
+                        );
+                    }
                 }
-                flush_jobs(context);
+                flush_jobs(context, client);
+            }
+            JsCommand::ClearEsmModuleCache => {
+                if let Some(loader) = context.downcast_module_loader::<FetchModuleLoader>() {
+                    loader.clear();
+                }
+                flush_jobs(context, client);
             }
             JsCommand::RegisterExtension { extension } => {
                 if let Err(e) = extension.register(context, client.clone()) {
-                    log::error!("Failed to register extension: {:?}", e);
+                    log::error!("Failed to register extension: {e:?}");
                 }
-                flush_jobs(context);
+                flush_jobs(context, client);
             }
             JsCommand::FlushEventLoop | JsCommand::Shutdown => {}
         }
     }
 
-    pub(super) fn flush_jobs(context: &mut Context) {
+    pub(super) fn flush_jobs(context: &mut Context, client: &JsEngineClient) {
         // Uses FrameJobExecutor (installed in builder on wasm32): budgeted pump of
         // ready promise/timeout/generic jobs plus a non-blocking poll of host
         // futures. Must not call SimpleJobExecutor's block_on path — that busy-spins
         // on wasm32 and the browser kills the script.
         if let Err(e) = context.run_jobs() {
-            if let Some(e) = e.as_opaque() {
-                let msg = e.to_json(context).unwrap_or_default();
-                log::error!("Error running Boa jobs: {:?}", msg);
-            } else {
-                log::error!("Error running Boa jobs: {:?}", e);
-            }
+            let (message, stack) = format_js_error(&e, context);
+            client
+                .reporter
+                .report_message(JsErrorSource::Job, message, stack);
         }
     }
 }

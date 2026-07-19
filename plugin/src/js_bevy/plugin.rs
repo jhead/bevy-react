@@ -3,7 +3,9 @@
 use bevy::prelude::*;
 use std::{ops::Deref, sync::Arc};
 
-use crate::js::{JsEngineBuilder, JsEngineClient, JsEngineExtension};
+use crate::js::{
+    JsEngineBuilder, JsEngineClient, JsEngineExtension, JsErrorRecord, JsErrorSource,
+};
 #[cfg(feature = "websocket")]
 use crate::js::WebSocketExtension;
 
@@ -22,12 +24,35 @@ impl Deref for JsClientResource {
     }
 }
 
+/// Visible Bevy-side error state for JS script/module/console/uncaught failures
+/// and native engine panic restarts.
+///
+/// Updated each frame from the shared [`crate::js::JsErrorReporter`]. Apps can
+/// read `last_error` to show an overlay, and watch `engine_generation` to detect
+/// native JS-thread restarts (re-dirty React roots as needed).
+#[derive(Resource, Debug, Clone, Default)]
+pub struct JsRuntimeError {
+    pub last_error: Option<JsErrorRecord>,
+    pub engine_generation: u64,
+}
+
+impl JsRuntimeError {
+    pub fn clear(&mut self) {
+        self.last_error = None;
+    }
+
+    pub fn source(&self) -> Option<JsErrorSource> {
+        self.last_error.as_ref().map(|e| e.source)
+    }
+}
+
 /// Bevy plugin for JavaScript engine integration.
 ///
 /// This plugin:
 /// - Starts the JS engine on a dedicated thread
 /// - Exposes `JsClientResource` as a Bevy resource for script execution
 /// - Ticks the JS event loop each frame
+/// - Syncs [`JsRuntimeError`] from the JS error reporter
 /// - Shuts down the engine on [`AppExit`]
 ///
 /// ## Usage
@@ -44,16 +69,17 @@ impl Plugin for JsPlugin {
         log::info!("Starting JS engine...");
 
         let builder = JsEngineBuilder::new();
-        
+
         #[cfg(feature = "websocket")]
         let builder = builder.with_extension(WebSocketExtension {});
-        
+
         let engine = builder.build().unwrap();
 
         let client = engine.start().unwrap();
 
         app.insert_resource(JsClientResource(client))
-            .add_systems(Update, tick_js_engine)
+            .init_resource::<JsRuntimeError>()
+            .add_systems(Update, (tick_js_engine, sync_js_runtime_error))
             .add_systems(Update, on_extension_added)
             .add_systems(Last, shutdown_js_engine_on_exit);
     }
@@ -62,6 +88,17 @@ impl Plugin for JsPlugin {
 /// Tick the JS event loop each frame.
 fn tick_js_engine(client: Res<JsClientResource>) {
     client.flush_event_loop();
+}
+
+/// Pull the latest JS error (and engine generation) into a Bevy resource.
+fn sync_js_runtime_error(
+    client: Res<JsClientResource>,
+    mut runtime_error: ResMut<JsRuntimeError>,
+) {
+    runtime_error.engine_generation = client.error_reporter().generation();
+    if let Some(record) = client.error_reporter().take() {
+        runtime_error.last_error = Some(record);
+    }
 }
 
 fn shutdown_js_engine_on_exit(

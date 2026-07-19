@@ -1,6 +1,9 @@
 use boa_engine::{Context, Source};
 
 /// Register environment shims for browser/Node.js compatibility.
+///
+/// Timers (`setTimeout` / `setInterval`) come from `boa_runtime::TimeoutExtension`
+/// and are drained by the job executor — do not reimplement them here.
 pub(crate) fn register_environment_shims(context: &mut Context) {
     let shims = r#"
 (function() {
@@ -28,24 +31,7 @@ pub(crate) fn register_environment_shims(context: &mut Context) {
         }
     };
 
-    // 4. Event Loop & Timers
-    // We maintain a priority queue of timers
-    var timers = [];
-    var timerIdCounter = 0;
-
-    function schedule_interval(callback, delay, id) {
-         timers.push({
-            id: id,
-            callback: function() {
-                callback();
-                schedule_interval(callback, delay, id);
-            },
-            args: [],
-            dueTime: Date.now() + delay
-        });
-    }
-
-    // 5. RequestAnimationFrame (simulated with setTimeout)
+    // 4. RequestAnimationFrame (simulated with setTimeout from boa_runtime)
     globalThis.requestAnimationFrame = function(callback) {
         return setTimeout(function() { callback(Date.now()); }, 16);
     };
@@ -54,7 +40,7 @@ pub(crate) fn register_environment_shims(context: &mut Context) {
         clearTimeout(id);
     };
 
-    // 6. MessageChannel (React Scheduler)
+    // 5. MessageChannel (React Scheduler)
     // Uses setTimeout(0) to schedule a macrotask, yielding to the event loop.
     globalThis.MessageChannel = function MessageChannel() {
         var self = this;
@@ -80,14 +66,14 @@ pub(crate) fn register_environment_shims(context: &mut Context) {
         };
     };
 
-    // 7. Performance
+    // 6. Performance
     if (!globalThis.performance) {
         globalThis.performance = {
             now: function() { return Date.now(); }
         };
     }
 
-    console.log('[Shims] Environment initialized (window, process, event loop)');
+    console.log('[Shims] Environment initialized (window, process, rAF, MessageChannel)');
 })();
     "#;
 

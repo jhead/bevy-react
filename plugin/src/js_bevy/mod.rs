@@ -5,7 +5,9 @@
 
 mod plugin;
 
-pub use plugin::{JsEngineExtensionComponent, JsClientResource, JsPlugin};
+pub use plugin::{JsEngineExtensionComponent, JsClientResource, JsPlugin, JsRuntimeError};
 
 // Re-export core JS types for convenience
-pub use crate::js::{JsCommand, JsEngine, JsEngineClient};
+pub use crate::js::{
+    JsCommand, JsEngine, JsEngineClient, JsErrorRecord, JsErrorReporter, JsErrorSource,
+};

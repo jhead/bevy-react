@@ -29,6 +29,15 @@ impl FetchModuleLoader {
             .insert(specifier.clone(), module);
         log::info!("Cached local module: {}", specifier);
     }
+
+    /// Drop all cached modules so the next import re-fetches / re-parses.
+    /// Used by Vite HMR full reload to avoid serving stale transitive deps.
+    pub fn clear(&self) {
+        let mut cache = self.local_modules.borrow_mut();
+        let count = cache.len();
+        cache.clear();
+        log::info!("Cleared ESM module cache ({count} entries)");
+    }
 }
 
 impl ModuleLoader for FetchModuleLoader {
@@ -107,17 +116,13 @@ impl ModuleLoader for FetchModuleLoader {
         let body = self.runtime.block_on(async {
             let response = reqwest::get(&resolved_specifier).await.map_err(|e| {
                 JsError::from_native(
-                    JsNativeError::typ()
-                        .with_message(format!("Fetch error: {}", e.to_string()))
-                        .into(),
+                    JsNativeError::typ().with_message(format!("Fetch error: {}", e)),
                 )
             })?;
 
             let body = response.text().await.map_err(|e| {
                 JsError::from_native(
-                    JsNativeError::typ()
-                        .with_message(format!("Fetch resposne error: {}", e.to_string()))
-                        .into(),
+                    JsNativeError::typ().with_message(format!("Fetch resposne error: {}", e)),
                 )
             })?;
 
@@ -128,17 +133,13 @@ impl ModuleLoader for FetchModuleLoader {
         let body = {
             let response = reqwest::get(&resolved_specifier).await.map_err(|e| {
                 JsError::from_native(
-                    JsNativeError::typ()
-                        .with_message(format!("Fetch error: {}", e.to_string()))
-                        .into(),
+                    JsNativeError::typ().with_message(format!("Fetch error: {}", e)),
                 )
             })?;
 
             let body = response.text().await.map_err(|e| {
                 JsError::from_native(
-                    JsNativeError::typ()
-                        .with_message(format!("Fetch resposne error: {}", e.to_string()))
-                        .into(),
+                    JsNativeError::typ().with_message(format!("Fetch resposne error: {}", e)),
                 )
             })?;
 

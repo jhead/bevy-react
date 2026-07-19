@@ -104,6 +104,25 @@ declare global {
    * Clear keyboard focus (host emits blur for the previously focused node).
    */
   function __react_request_blur(): void;
+
+  /**
+   * Registers a callback the host invokes when flushing bridge state channels.
+   */
+  function __react_register_bridge_dispatcher(
+    callback: (channel: string, value: unknown) => void
+  ): void;
+
+  /**
+   * Drains dirty bridge channels and invokes the registered dispatcher.
+   */
+  function __react_flush_bridge(): void;
+
+  /**
+   * Enqueue a call to a Rust handler registered via `ReactBridge::register`.
+   * @param name - Handler name
+   * @param argsJson - JSON-encoded argument (any JSON value)
+   */
+  function __react_call(name: string, argsJson: string): void;
 }
 
 export {};

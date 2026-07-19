@@ -3,6 +3,9 @@ import type { ReactNode } from "react";
 // Import types module for side-effects (registers JSX global augmentation)
 import "./types";
 
+import {
+  installBridgeDispatcher,
+} from "./bridge";
 import { installEventDispatcher, hostDispatchEvent } from "./events";
 import { dispatchEvent } from "./reconciler";
 import {
@@ -31,6 +34,15 @@ export type {
 } from "./events";
 
 export {
+  callNative,
+  getBridgeState,
+  hostDispatchBridge,
+  installBridgeDispatcher,
+  subscribeBridge,
+  useBridgeState,
+} from "./bridge";
+
+export {
   ensureRoot,
   getInstance,
   getRoot,
@@ -53,11 +65,13 @@ setInstanceLookup(getInstance);
  */
 function render(element: ReactNode, rootId: string): void {
   installEventDispatcher();
+  installBridgeDispatcher();
   renderRoot(element, rootId);
 }
 
 export function createBevyApp(element: ReactNode): BevyReactApp {
   installEventDispatcher();
+  installBridgeDispatcher();
   return {
     dispatchEvent,
     render: (rootId: string) => render(element, rootId),

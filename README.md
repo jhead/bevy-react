@@ -26,6 +26,7 @@ Pinned to **Bevy 0.17.3** and **React 19**.
 | [Getting Started](docs/GETTING_STARTED.md) | Local setup and first UI |
 | [Style Props](docs/STYLE_PROPS.md) | Supported CSS-like style properties |
 | [Architecture](docs/ARCHITECTURE.md) | How the two-runtime bridge works |
+| [Data Bridge](docs/BRIDGE.md) | Push ECS state into React / call Rust from JS |
 | [Examples](docs/EXAMPLES.md) | Demo and planned examples |
 | [Project Plan](docs/PROJECT_PLAN.md) | Roadmap / epics |
 | [Contributing](CONTRIBUTING.md) | How to contribute |

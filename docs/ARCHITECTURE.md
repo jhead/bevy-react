@@ -63,6 +63,7 @@ Conditional compilation swaps clocks, threading, and tokio features for `wasm32`
 | JS engine (native) | `plugin/src/js/engine.rs` |
 | JS engine (WASM) | `plugin/src/js/engine_wasm.rs` |
 | Native JS functions | `plugin/src/react/native_functions.rs` |
+| Data bridge | `plugin/src/react/bridge.rs`, `packages/bevy-react/src/bridge.ts` |
 | RPC client | `plugin/src/react/client.rs` |
 | Style conversion | `plugin/src/react/style.rs` |
 | Render system | `plugin/src/react/systems/render.rs` |
@@ -79,5 +80,5 @@ Accurate for today; details in [PROJECT_PLAN.md](PROJECT_PLAN.md):
 - Unmount / destroy paths are incomplete (entity leaks possible).
 - Style contracts between TS and Rust have drifted in places.
 - Multiple simultaneous React roots are not fully supported on the TS side.
-- No public API yet for pushing ECS game state into React or registering Rust callables from JS (despite the long-term goal of native FFI).
+- No full example crate yet for HUD/game-state binding (API exists — see [BRIDGE.md](BRIDGE.md)).
 - Packages are unpublished; treat as path-dependency only.

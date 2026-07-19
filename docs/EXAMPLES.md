@@ -19,7 +19,7 @@ Additional examples are tracked under Epic 8 in [PROJECT_PLAN.md](PROJECT_PLAN.m
 | Example | Goal |
 |---|---|
 | Menu screen | Full-screen layout, navigation between panels, button hover/press feedback |
-| HUD + game state | Bind Bevy ECS / game state into React (once a data bridge exists) |
+| HUD + game state | Bind Bevy ECS / game state into React — see [BRIDGE.md](BRIDGE.md) for the API; full example crate still planned |
 | Forms / settings | TextInput, toggles, validation-style flows |
 
 These are documentation placeholders only — the example crates are not in the tree yet.

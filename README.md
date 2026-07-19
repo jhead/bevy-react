@@ -19,6 +19,15 @@ Early prototype — **don't use this in production yet.** Core render/input plum
 
 Pinned to **Bevy 0.17.3** and **React 19**. See [Bevy version support](docs/BEVY_VERSION.md) for the support policy and tracking matrix.
 
+## Examples
+
+| [Demo](examples/demo/) | [Menu](examples/menu/) | [Forms](examples/forms/) | [HUD](examples/hud/) |
+| --- | --- | --- | --- |
+| ![Demo](docs/media/demo.png) | ![Menu](docs/media/menu.png) | ![Forms](docs/media/forms.png) | ![HUD](docs/media/hud.png) |
+| Bevy + Vite starter with HMR | Full-screen menu and navigation | TextInput, Checkbox, Slider, Select | ECS stats via `ReactBridge` |
+
+See [docs/EXAMPLES.md](docs/EXAMPLES.md) for run instructions.
+
 ## Documentation
 
 | Doc | Description |

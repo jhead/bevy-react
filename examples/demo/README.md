@@ -1,5 +1,7 @@
 # Demo Example
 
+![Demo screenshot](../../docs/media/demo.png)
+
 This simple React + Vite + Typescript demo shows:
 - How to spawn the React UI in Bevy, mount it to a specific area, and specify the JS source to load
 - Basic components available to use in React, including styling props

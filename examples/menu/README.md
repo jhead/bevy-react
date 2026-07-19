@@ -1,5 +1,7 @@
 # Menu Example
 
+![Menu screenshot](../../docs/media/menu.png)
+
 Full-screen menu screen built with bevy-react: title, panel navigation, and
 button hover/press feedback via `useInteraction`.
 

@@ -1,8 +1,16 @@
 # Examples
 
+Screenshots live in [`docs/media/`](media/). Regenerate them with:
+
+```bash
+./scripts/capture-example-screenshots.sh
+```
+
 ## Available
 
 ### Demo (`examples/demo/`)
+
+![Demo screenshot](media/demo.png)
 
 End-to-end Bevy + Vite + TypeScript sample:
 
@@ -13,6 +21,8 @@ End-to-end Bevy + Vite + TypeScript sample:
 See [examples/demo/README.md](../examples/demo/README.md) and [GETTING_STARTED.md](GETTING_STARTED.md).
 
 ### Menu (`examples/menu/`)
+
+![Menu screenshot](media/menu.png)
 
 Full-screen menu with panel navigation (Play / Options / Credits) and hover/press feedback via `useInteraction`.
 
@@ -25,6 +35,8 @@ See [examples/menu/README.md](../examples/menu/README.md).
 
 ### Forms / settings (`examples/forms/`)
 
+![Forms screenshot](media/forms.png)
+
 Settings panel exercising `TextInput` (caret/selection/clipboard), `Checkbox`, `Slider`, and `Select`, plus light client-side validation.
 
 ```bash
@@ -35,6 +47,8 @@ cargo run --manifest-path examples/forms/Cargo.toml
 See [examples/forms/README.md](../examples/forms/README.md).
 
 ### HUD (`examples/hud/`)
+
+![HUD screenshot](media/hud.png)
 
 Game-state binding via [`ReactBridge`](BRIDGE.md): Rust ticks HP/score and publishes on a channel; React reads with `useBridgeState` and can call `add_score` through `callNative`.
 

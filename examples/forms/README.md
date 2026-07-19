@@ -1,5 +1,7 @@
 # Forms / Settings Example
 
+![Forms screenshot](../../docs/media/forms.png)
+
 Settings-style panel exercising TextInput, Checkbox, Slider, and Select.
 
 ## How to run

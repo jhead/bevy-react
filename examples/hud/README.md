@@ -1,5 +1,7 @@
 # HUD Example
 
+![HUD screenshot](../../docs/media/hud.png)
+
 Binds Bevy ECS player stats into React via [`ReactBridge`](../../docs/BRIDGE.md):
 
 - Rust publishes `{ hp, max_hp, score, hp_ratio }` on the `"hud"` channel each change

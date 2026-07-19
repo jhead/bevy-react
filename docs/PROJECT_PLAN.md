@@ -4,9 +4,9 @@ Living roadmap for bevy-react. Items marked `[x]` landed on `main` (verify + ite
 
 ## Assessment
 
-The core architecture is sound and works end-to-end: Boa runs React on a worker thread (native) or main thread (WASM), a custom reconciler ships mutations over an RPC enum, and Bevy systems materialize entities. Early prototype status remains accurate for production use, but several structural blockers are closed: entity destroy on unmount, native structured event dispatch (no eval), WASM budgeted job pump, borderWidth sync, and basic CI/tests/docs.
+The core architecture is sound and works end-to-end: Boa runs React on a worker thread (native) or main thread (WASM), a custom reconciler ships mutations over an RPC enum, and Bevy systems materialize entities. Early prototype status remains accurate for production use, but several structural blockers are closed: entity destroy on unmount, native structured event dispatch (no eval), WASM budgeted job pump (`ContextGate`, no leak/future-transmute), multi-root TS containers + instance maps, root teardown on `ReactRoot` despawn, borderWidth sync, and basic CI/tests/docs.
 
-Remaining structural gaps: Epic 1 multi-root checkbox still open (TS largely done), style coverage and built-ins incomplete vs production needs, and there is no public Rust↔React data bridge. Root teardown on `ReactRoot` despawn is in place.
+Remaining gaps: style coverage still missing text shadow / line-break and image atlas/slice; built-ins incomplete vs production needs; no public Rust↔React data bridge; Epic A manual demo smoke and full Boa+React e2e still open.
 
 ## Epic 1: Correctness of the render pipeline
 
@@ -15,7 +15,7 @@ Remaining structural gaps: Epic 1 multi-root checkbox still open (TS largely don
 - [x] Remove stale components on update: clearing `backgroundColor`/`borderColor`/`zIndex`/`borderRadius` from props removes the component.
 - [x] Reconcile TS `BevyStyle` with Rust `StyleProps` for `borderWidth` (Rust accepts alias). Shared-schema sync test still TODO.
 - [x] Deep-compare props/`style` before update RPC (`commitUpdate` diffs; skip when unchanged).
-- [ ] Support multiple simultaneous roots: per-root fiber containers in TS (drop the global `fiberRoot`) and per-root instance maps.
+- [x] Support multiple simultaneous roots: per-root fiber containers in TS (`roots.ts`; drop the global `fiberRoot`) and per-root instance maps.
 - [x] Handle root teardown: despawning a `ReactRoot` entity should unmount the React tree and clean `ReactRootMap`/JS state.
 - [x] Replace `unwrap()`/`expect()` in engine and message paths (~16 sites) with logged error recovery so bad JS can't kill the thread.
 
@@ -25,9 +25,9 @@ Remaining structural gaps: Epic 1 multi-root checkbox still open (TS largely don
 - [x] Support 4-value/2-value shorthands for `margin`/`padding`/`borderRadius` ("8px 16px").
 - [x] Extend `parse_color`: full CSS named-color table, `hsl()/hsla()`, and shorthand `rgb(0 0 0 / 0.5)` syntax.
 - [x] Per-corner border radius and per-side border colors.
-- [ ] Text styling: `fontFamily` via Bevy font assets, `textAlign`/`JustifyText`, `lineHeight`, line-break behavior, and text shadow. (Parsers/helpers + TS types landed; render wiring, asset font load, line-break, and text shadow still TODO.)
-- [ ] Add `opacity`, `boxShadow`, and `BackgroundGradient` support (Bevy 0.17 has these). (Parsers/helpers + TS types landed; render insertion still TODO. No Bevy `UiOpacity` — opacity is a scalar helper.)
-- [ ] Image props: `objectFit` (ImageNode scale modes), tint color, atlas/slice support. (`objectFit`/`tint` parsers + TS types landed; render wiring and atlas/slice still TODO.)
+- [x] Text styling: `fontFamily` via Bevy font assets, `textAlign`/`JustifyText`, and `lineHeight` wired in `apply_text_style*`. (Line-break behavior and text shadow still TODO.)
+- [x] Add `opacity`, `boxShadow`, and `BackgroundGradient` support (Bevy 0.17 has these). Wired in `apply_visual_style*`; opacity multiplies into colors (no Bevy `UiOpacity`).
+- [x] Image props: `objectFit` (ImageNode scale modes) and tint color wired on create/update. (Atlas/slice support still TODO.)
 
 ## Epic 3: Event system
 
@@ -83,14 +83,14 @@ Remaining structural gaps: Epic 1 multi-root checkbox still open (TS largely don
 - [ ] Ship 2–3 more examples (menu screen, HUD with game-state binding, forms/settings panel). (Planned in `docs/EXAMPLES.md`.)
 - [ ] Rust↔React data bridge: a supported way to push game state into React (context/store fed from ECS) and call registered Rust functions from JS.
 - [ ] Bevy version support policy and a tracking matrix (currently pinned to 0.17.3).
-- [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until remaining Epic 1 multi-root/teardown and Epic 3 focus/scroll land.
+- [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until Epic 2 leftovers, Epic 4 TextInput depth, data bridge, and Epic 7 e2e land.
 
-Rough priority for remaining work: **Epic A verify/harden** (FrameJobExecutor soundness, demo smoke) → **Epic B** (finish multi-root) → Epic 6 loading → Epic 2 styles → deepen Epic 4/3/5/7 → publish (Epic 8).
+Rough priority for remaining work: **Epic A** (manual demo smoke) → Epic 2 leftovers (text shadow / line-break, atlas/slice) → deepen Epic 4/7 → data bridge (Epic 8) → publish.
 
 ## Verification backlog (Epic A — from mid-stream review)
 
 - [x] `cargo clippy -D warnings`, full `cargo test`, `tsc`, vitest green on every commit
-- [ ] FrameJobExecutor: eliminate or tightly bound `Box::leak` + `transmute` of context-borrowing futures
+- [x] FrameJobExecutor: eliminate `Box::leak` + future `transmute` via `ContextGate` in `builder.rs` (attach/detach raw pointer; layout-reinterpret `RefCell` only; drop pending jobs if Context address changes)
 - [ ] Manual demo smoke (native; wasm if feasible) for click/hover/focus/keyboard via event queue
 - [x] Headless `ReactClientProto` tests: destroy-subtree, clear-component-on-update, double-destroy idempotent (`react/message_tests.rs` + `plugin/tests/message_handling.rs`)
 - [x] Reorder-heavy list updates: destroy stays silent when both `removeChild` and `detachDeletedInstance` fire (vitest)

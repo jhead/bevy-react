@@ -95,9 +95,22 @@ export {
   BRRP_FLAG_STRING_TABLE,
   BRRP_MAGIC,
   BRRP_VERSION,
+  decodeBatch,
+  encodeBatch,
   encodeBatchStub,
+  isBinaryOpsEnabled,
   OpCode,
 } from "./protocol";
+export type { BinaryOp, EncodeBatchOptions } from "./protocol";
+
+export interface BevyReactAppOptions {
+  /**
+   * Batch commits into BRRP via `__react_commit_ops`.
+   * Requires host `--features binary_ops`. When omitted, reads
+   * `globalThis.__BEVY_REACT_BINARY_OPS` (`1` / `true` / `"1"`).
+   */
+  binaryOps?: boolean;
+}
 
 export interface BevyReactApp {
   render: (rootId: string) => void;
@@ -111,18 +124,25 @@ setInstanceLookup(getInstance);
 /**
  * Render a React element tree to Bevy UI for `rootId`.
  */
-function render(element: ReactNode, rootId: string): void {
+function render(
+  element: ReactNode,
+  rootId: string,
+  options?: BevyReactAppOptions
+): void {
   installEventDispatcher();
   installBridgeDispatcher();
-  renderRoot(element, rootId);
+  renderRoot(element, rootId, options);
 }
 
-export function createBevyApp(element: ReactNode): BevyReactApp {
+export function createBevyApp(
+  element: ReactNode,
+  options?: BevyReactAppOptions
+): BevyReactApp {
   installEventDispatcher();
   installBridgeDispatcher();
   return {
     dispatchEvent,
-    render: (rootId: string) => render(element, rootId),
+    render: (rootId: string) => render(element, rootId, options),
     unmount: (rootId: string) => unmountRoot(rootId),
   };
 }

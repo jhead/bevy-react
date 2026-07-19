@@ -2,23 +2,43 @@
 
 Bevy-React Render Protocol — a compact little-endian batch format for the hot React → Bevy mutation path (`CreateNode`, `UpdateNode`, `AppendChild`, …).
 
-Today the default path is still the in-process enum RPC (`ReactClientProto` over `mpsc`). BRRP sits **beside** that path: same semantics, denser framing for a future JS→native batch commit.
+Today the **default** path is still the in-process enum RPC (`ReactClientProto` over `mpsc`). BRRP sits **beside** that path: same semantics, denser framing. The TS reconciler can encode one commit into a BRRP frame when opted in.
 
 ## Status
 
 | Piece | State |
 |---|---|
 | Schema + design notes | This doc |
-| Rust encode/decode (`plugin/src/react/proto/`) | Landed; unit-tested |
+| Rust encode/decode (`plugin/src/react/proto/`) | Landed; unit-tested (inline + string table) |
 | Cargo feature `binary_ops` | Registers `__react_commit_ops` |
-| TS reconciler encoding | Stub only (`packages/bevy-react/src/protocol.ts`) |
-| Default reconciler switched to binary | **Not wired** — enum natives remain |
+| TS encode/decode (`packages/bevy-react/src/protocol.ts`) | Landed; golden-byte + round-trip tests |
+| TS reconciler binary commit path | Opt-in (`binaryOps` / `__BEVY_REACT_BINARY_OPS`) |
+| Default reconciler switched to binary | **Not yet** — enum natives remain default |
 
-Enable the host binding:
+## Enabling the binary hot path
+
+**Host** (required for `__react_commit_ops`):
 
 ```bash
 cargo build --manifest-path plugin/Cargo.toml --features binary_ops
 ```
+
+**JS reconciler** (pick one):
+
+```js
+// Package option (preferred)
+createBevyApp(<App />, { binaryOps: true });
+// or
+renderRoot(<App />, "root", { binaryOps: true });
+createBevyReconciler({ rootId, instanceMap, binaryOps: true });
+```
+
+```js
+// Global flag (Boa / Vite entry can set before createBevyApp)
+globalThis.__BEVY_REACT_BINARY_OPS = 1; // also true / "1"
+```
+
+When enabled, mutation RPCs are queued during the React commit and flushed once via `__react_commit_ops(Uint8Array)` from `resetAfterCommit`. Node ids are allocated on the JS side; the host advances its id counter so a later enum-path alloc cannot collide.
 
 ## Why custom binary (not protobuf)
 
@@ -30,10 +50,14 @@ All multi-byte integers are **little-endian**.
 
 ```
 Frame {
-  magic:      u32   // 0x42525250 ASCII "BRRP" (B at low byte)
+  magic:      u32   // ASCII "BRRP" on the wire (B at low byte) = 0x50525242
   version:    u16   // 1
-  flags:      u16   // MVP: must be 0; bit0 reserved for string table
-  root_id:    String
+  flags:      u16   // bit0 = FLAG_STRING_TABLE; other bits rejected
+  [table: {         // only when FLAG_STRING_TABLE
+    count: u32
+    entries: String[count]   // index 0 reserved / unused
+  }]
+  root_id:    String | StringRef
   op_count:   u32
   ops:        Op[op_count]
 }
@@ -42,6 +66,8 @@ String {
   len:   u32
   utf8:  u8[len]
 }
+
+StringRef = u32 index   // 0 ⇒ inline String follows; else table[index]
 ```
 
 `root_id` is written **once per frame** and expanded onto each decoded `ReactClientProto` message.
@@ -50,13 +76,13 @@ String {
 
 | Code | Name | Payload |
 |---|---|---|
-| `0x01` | CreateNode | `node_id:u64`, `node_type:String`, `props_json:String` |
-| `0x02` | CreateText | `node_id:u64`, `content:String` |
+| `0x01` | CreateNode | `node_id:u64`, `node_type:String|StringRef`, `props_json:String|StringRef` |
+| `0x02` | CreateText | `node_id:u64`, `content:String|StringRef` |
 | `0x03` | AppendChild | `parent_id:u64`, `child_id:u64` |
 | `0x04` | InsertBefore | `parent_id:u64`, `child_id:u64`, `before_id:u64` |
 | `0x05` | RemoveChild | `parent_id:u64`, `child_id:u64` |
-| `0x06` | UpdateNode | `node_id:u64`, `props_json:String` |
-| `0x07` | UpdateText | `node_id:u64`, `content:String` |
+| `0x06` | UpdateNode | `node_id:u64`, `props_json:String|StringRef` |
+| `0x07` | UpdateText | `node_id:u64`, `content:String|StringRef` |
 | `0x08` | DestroyNode | `node_id:u64` |
 | `0x09` | ClearContainer | _(none)_ |
 | `0x0A` | Commit | _(none)_ → `ReactClientProto::Complete` |
@@ -67,48 +93,37 @@ Props remain JSON strings in v1 (style conversion still parses JSON). A later re
 
 One BRRP frame = one React commit batch for a single root:
 
-1. Reconciler (or test harness) encodes all mutations for the commit into one buffer.
+1. Reconciler encodes all mutations for the commit into one buffer (plus trailing `Commit`).
 2. Host decodes and enqueues `ReactClientProto` messages in order.
 3. Trailing `Commit` (`0x0A`) maps to `Complete` (same marker the enum path already uses).
 
 The Bevy render system still drains the channel per frame; BRRP does not yet introduce a separate apply barrier beyond `Complete`.
 
-## String interning (design notes — not in MVP)
+## String interning (`FLAG_STRING_TABLE`)
 
-Repeated `node_type`, style keys, and `root_id`-adjacent strings dominate payload size once props stop being JSON blobs.
+When `flags & FLAG_STRING_TABLE` is set, the frame includes a string table after `flags`, and every string field is a `StringRef` (`u32` index). Index `0` is reserved as an inline escape (`0` + following `String`).
 
-Planned shape when `flags & FLAG_STRING_TABLE` is set:
-
-```
-Frame {
-  …
-  flags:      u16   // bit0 = string table present
-  table: {
-    count: u32
-    entries: String[count]   // index 0 reserved / unused
-  }
-  root_id:    StringRef      // u32 index into table, or inline escape
-  …
-}
-
-StringRef = u32 index   // 0 means “inline String follows” escape hatch (TBD)
+```rust
+encode_batch_with(root, &ops, EncodeOptions { string_table: true })?;
 ```
 
-MVP keeps **inline strings only** (`flags == 0`). Decoders must reject unknown flags so old hosts fail loudly.
+```ts
+encodeBatch(rootId, ops, { stringTable: true });
+```
+
+The reconciler binary path currently uses **inline strings** (`flags == 0`) for soak simplicity; pass `{ stringTable: true }` to the encoder when you want interning. Decoders reject unknown flag bits so old hosts fail loudly.
 
 ## Dual path
 
 | Path | How |
 |---|---|
 | **Enum (default)** | `__react_create_node`, `__react_append_child`, … → `ReactClient::send` |
-| **Binary (`binary_ops`)** | `__react_commit_ops(Uint8Array \| ArrayBuffer)` → `decode_protos` → same channel |
-
-The reconciler does not call `__react_commit_ops` yet. Use the Rust codec (or the TS stub constants) to build buffers for tests and future wiring.
+| **Binary (opt-in)** | Queue ops → `encodeBatch` → `__react_commit_ops` → `decode_protos` → same channel |
 
 ## Rust API
 
 ```rust
-use bevy_react::react::proto::{decode_batch, encode_batch, BinaryOp};
+use bevy_react::react::proto::{decode_batch, encode_batch, encode_batch_with, BinaryOp, EncodeOptions};
 
 let bytes = encode_batch("root", &[
     BinaryOp::CreateNode {
@@ -119,6 +134,8 @@ let bytes = encode_batch("root", &[
     BinaryOp::Commit,
 ])?;
 let (root, ops) = decode_batch(&bytes)?;
+
+let interned = encode_batch_with("root", &ops, EncodeOptions { string_table: true })?;
 ```
 
 `encode_protos` / `decode_protos` convert to/from `ReactClientProto`.

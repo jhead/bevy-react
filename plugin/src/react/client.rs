@@ -206,11 +206,42 @@ impl ReactClient {
     ///
     /// Used by the `binary_ops` feature path (`__react_commit_ops`). The existing
     /// per-op native functions remain the default dual path.
+    ///
+    /// Advances [`NODE_ID_COUNTER`] past any create ids so a later enum-path
+    /// allocation cannot collide with JS-allocated binary ids.
     pub fn commit_binary_ops(&self, bytes: &[u8]) -> Result<(), crate::react::proto::DecodeError> {
         let msgs = crate::react::proto::decode_protos(bytes)?;
+        for msg in &msgs {
+            if let Some(id) = proto_node_id(msg) {
+                bump_node_id_counter_to_at_least(id);
+            }
+        }
         for msg in msgs {
             self.send(msg);
         }
         Ok(())
+    }
+}
+
+fn proto_node_id(msg: &ReactClientProto) -> Option<u64> {
+    match msg {
+        ReactClientProto::CreateNode { node_id, .. }
+        | ReactClientProto::CreateText { node_id, .. } => Some(*node_id),
+        _ => None,
+    }
+}
+
+fn bump_node_id_counter_to_at_least(id: u64) {
+    loop {
+        let cur = NODE_ID_COUNTER.load(Ordering::SeqCst);
+        if cur >= id {
+            return;
+        }
+        if NODE_ID_COUNTER
+            .compare_exchange(cur, id, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return;
+        }
     }
 }

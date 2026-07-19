@@ -24,7 +24,8 @@ export type ReactCall =
   | { op: "update_node"; rootId: string; nodeId: number; propsJson: string }
   | { op: "update_text"; rootId: string; nodeId: number; content: string }
   | { op: "destroy_node"; rootId: string; nodeId: number }
-  | { op: "clear_container"; rootId: string };
+  | { op: "clear_container"; rootId: string }
+  | { op: "commit_ops"; bytes: Uint8Array };
 
 export interface MockReactGlobals {
   calls: ReactCall[];
@@ -33,6 +34,8 @@ export interface MockReactGlobals {
   liveIds: Set<number>;
   /** nodeId → how many times destroy was invoked (including no-ops). */
   destroyCounts: Map<number, number>;
+  /** Decoded BRRP frames from `__react_commit_ops` (when present). */
+  commitFrames: Uint8Array[];
   reset: () => void;
   ops: () => string[];
   /** Destroy calls where the node was already gone (idempotent second path). */
@@ -43,6 +46,7 @@ export function installMockReactGlobals(): MockReactGlobals {
   const calls: ReactCall[] = [];
   const liveIds = new Set<number>();
   const destroyCounts = new Map<number, number>();
+  const commitFrames: Uint8Array[] = [];
   let nextId = 1;
 
   const g = globalThis as typeof globalThis & Record<string, unknown>;
@@ -114,10 +118,19 @@ export function installMockReactGlobals(): MockReactGlobals {
     calls.push({ op: "clear_container", rootId });
   };
 
+  g.__react_commit_ops = (bytes: Uint8Array | ArrayBuffer) => {
+    const view =
+      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    const copy = new Uint8Array(view);
+    commitFrames.push(copy);
+    calls.push({ op: "commit_ops", bytes: copy });
+  };
+
   return {
     calls,
     liveIds,
     destroyCounts,
+    commitFrames,
     get nextId() {
       return nextId;
     },
@@ -130,6 +143,7 @@ export function installMockReactGlobals(): MockReactGlobals {
       calls.length = 0;
       liveIds.clear();
       destroyCounts.clear();
+      commitFrames.length = 0;
     },
     ops() {
       return calls.map((c) => c.op);

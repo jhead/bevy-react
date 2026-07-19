@@ -14,6 +14,17 @@ declare global {
   function setInterval(callback: () => void, delay?: number): number;
   function clearInterval(handle: number): void;
 
+  class TextEncoder {
+    encode(input?: string): Uint8Array;
+  }
+
+  class TextDecoder {
+    constructor(label?: string, options?: { fatal?: boolean });
+    decode(input?: AllowSharedBufferSource): string;
+  }
+
+  type AllowSharedBufferSource = ArrayBuffer | ArrayBufferView;
+
   /**
    * Browser-like WebSocket (shimmed in Boa via tokio-tungstenite when the
    * `websocket` Cargo feature is enabled).
@@ -104,6 +115,14 @@ declare global {
    * Decodes into the same ReactClientProto channel as the per-op natives.
    */
   function __react_commit_ops(bytes: Uint8Array | ArrayBuffer): void;
+
+  /**
+   * Opt-in flag for the TS reconciler binary commit path.
+   * Truthy: `true` | `1` | `"1"`. Ignored when `createBevyApp({ binaryOps })`
+   * / `createBevyReconciler({ binaryOps })` sets an explicit option.
+   */
+  // eslint-disable-next-line no-var
+  var __BEVY_REACT_BINARY_OPS: boolean | number | string | undefined;
 
   /**
    * Registers a callback the host invokes when draining the React event queue.

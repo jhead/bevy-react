@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach } from "vitest";
 import React from "react";
 import {
   createBevyReconciler,
+  resetBinaryNodeIdCounter,
   type BevyInstanceMap,
 } from "../src/reconciler";
+import { decodeBatch } from "../src/protocol";
 import {
   installMockReactGlobals,
   type MockReactGlobals,
@@ -466,5 +468,112 @@ describe("reconciler host config RPC sequences", () => {
 
     const destroyCalls = mock.calls.filter((c) => c.op === "destroy_node");
     expect(destroyCalls.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("reconciler binary commit path", () => {
+  let mock: MockReactGlobals;
+
+  beforeEach(() => {
+    mock = installMockReactGlobals();
+    resetBinaryNodeIdCounter(1);
+  });
+
+  function createBinaryRenderer(): Renderer {
+    mock.reset();
+    resetBinaryNodeIdCounter(1);
+    const instanceMap: BevyInstanceMap = new Map();
+    const reconciler = createBevyReconciler({
+      rootId: ROOT_ID,
+      instanceMap,
+      binaryOps: true,
+    });
+    const fiberRoot = reconciler.createContainer(
+      CONTAINER,
+      0,
+      null,
+      false,
+      null,
+      "",
+      () => {},
+      null
+    );
+
+    return {
+      render(element: React.ReactNode) {
+        reconciler.updateContainerSync(element, fiberRoot, null, null);
+        reconciler.flushSyncWork();
+      },
+      unmount() {
+        reconciler.updateContainerSync(null, fiberRoot, null, null);
+        reconciler.flushSyncWork();
+      },
+    };
+  }
+
+  it("batches mount into one __react_commit_ops BRRP frame", () => {
+    const { render } = createBinaryRenderer();
+    render(
+      React.createElement(
+        "bevy-node",
+        { style: { width: 100 } },
+        React.createElement("bevy-text", { children: "Hello" })
+      )
+    );
+
+    expect(mock.ops()).toEqual(["commit_ops"]);
+    expect(mock.commitFrames).toHaveLength(1);
+
+    const { rootId, ops } = decodeBatch(mock.commitFrames[0]!);
+    expect(rootId).toBe(ROOT_ID);
+    expect(ops.map((o) => o.op)).toEqual([
+      "CreateNode",
+      "CreateNode",
+      "AppendChild",
+      "AppendChild",
+      "Commit",
+    ]);
+    expect(ops.at(-1)).toEqual({ op: "Commit" });
+
+    const creates = ops.filter((o) => o.op === "CreateNode");
+    expect(creates).toHaveLength(2);
+    const text = creates.find((o) => o.op === "CreateNode" && o.nodeType === "bevy-text");
+    expect(text && text.op === "CreateNode" ? JSON.parse(text.propsJson).content : null).toBe(
+      "Hello"
+    );
+  });
+
+  it("respects globalThis.__BEVY_REACT_BINARY_OPS", () => {
+    const g = globalThis as typeof globalThis & {
+      __BEVY_REACT_BINARY_OPS?: unknown;
+    };
+    g.__BEVY_REACT_BINARY_OPS = 1;
+    try {
+      mock.reset();
+      resetBinaryNodeIdCounter(1);
+      const instanceMap: BevyInstanceMap = new Map();
+      // No explicit binaryOps — should pick up the global.
+      const reconciler = createBevyReconciler({ rootId: ROOT_ID, instanceMap });
+      const fiberRoot = reconciler.createContainer(
+        CONTAINER,
+        0,
+        null,
+        false,
+        null,
+        "",
+        () => {},
+        null
+      );
+      reconciler.updateContainerSync(
+        React.createElement("bevy-node", null),
+        fiberRoot,
+        null,
+        null
+      );
+      reconciler.flushSyncWork();
+      expect(mock.ops()).toEqual(["commit_ops"]);
+    } finally {
+      delete g.__BEVY_REACT_BINARY_OPS;
+    }
   });
 });

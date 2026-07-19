@@ -8,6 +8,11 @@ import type {
   ScrollEventData,
   WheelEventData,
 } from "./types";
+import {
+  encodeBatch,
+  isBinaryOpsEnabled,
+  type BinaryOp,
+} from "./protocol";
 
 type Type = string;
 type Props = Record<string, unknown>;
@@ -20,6 +25,22 @@ type UpdatePayload = Props;
 
 /** Per-root map of host instances keyed by node id. */
 export type BevyInstanceMap = Map<number, PublicInstance>;
+
+/**
+ * Shared JS-side node id allocator for the binary commit path.
+ * Advanced past host-allocated ids when mixing is not expected; Rust also
+ * bumps its counter on `__react_commit_ops`.
+ */
+let binaryNextNodeId = 1;
+
+/** @internal test helper */
+export function resetBinaryNodeIdCounter(next = 1): void {
+  binaryNextNodeId = next;
+}
+
+function allocBinaryNodeId(): number {
+  return binaryNextNodeId++;
+}
 
 /**
  * Deep-compare values for update diffing.
@@ -78,12 +99,9 @@ function isTextInstance(
   return !("type" in child);
 }
 
-function flushBevyTextContent(
-  rootId: string,
-  host: Instance
-): void {
+function flushBevyTextContent(hostConfig: BevyHostConfig, host: Instance): void {
   const content = (host.textSlots ?? []).map((slot) => slot.text).join("");
-  __react_update_node(rootId, host.nodeId, JSON.stringify({ content }));
+  hostConfig.updateNode(host.nodeId, JSON.stringify({ content }));
 }
 
 /**
@@ -380,10 +398,107 @@ function lookupInstance(
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 class BevyHostConfig {
-  constructor(readonly props: ReconcilerProps) {}
+  readonly useBinary: boolean;
+  private pendingOps: BinaryOp[] = [];
+
+  constructor(readonly props: ReconcilerProps) {
+    this.useBinary = isBinaryOpsEnabled(props.binaryOps);
+  }
 
   get instanceMap(): BevyInstanceMap {
     return this.props.instanceMap;
+  }
+
+  /** Queue or immediately send a create-node; returns the node id. */
+  createNode(type: string, propsJson: string): number {
+    if (this.useBinary) {
+      const nodeId = allocBinaryNodeId();
+      this.pendingOps.push({
+        op: "CreateNode",
+        nodeId,
+        nodeType: type,
+        propsJson,
+      });
+      return nodeId;
+    }
+    return __react_create_node(this.props.rootId, type, propsJson);
+  }
+
+  createText(content: string): number {
+    if (this.useBinary) {
+      const nodeId = allocBinaryNodeId();
+      this.pendingOps.push({ op: "CreateText", nodeId, content });
+      return nodeId;
+    }
+    return __react_create_text(this.props.rootId, content);
+  }
+
+  appendChildRpc(parentId: number, childId: number): void {
+    if (this.useBinary) {
+      this.pendingOps.push({ op: "AppendChild", parentId, childId });
+      return;
+    }
+    __react_append_child(this.props.rootId, parentId, childId);
+  }
+
+  insertBeforeRpc(
+    parentId: number,
+    childId: number,
+    beforeId: number
+  ): void {
+    if (this.useBinary) {
+      this.pendingOps.push({
+        op: "InsertBefore",
+        parentId,
+        childId,
+        beforeId,
+      });
+      return;
+    }
+    __react_insert_before(this.props.rootId, parentId, childId, beforeId);
+  }
+
+  removeChildRpc(parentId: number, childId: number): void {
+    if (this.useBinary) {
+      this.pendingOps.push({ op: "RemoveChild", parentId, childId });
+      return;
+    }
+    __react_remove_child(this.props.rootId, parentId, childId);
+  }
+
+  updateNode(nodeId: number, propsJson: string): void {
+    if (this.useBinary) {
+      this.pendingOps.push({ op: "UpdateNode", nodeId, propsJson });
+      return;
+    }
+    __react_update_node(this.props.rootId, nodeId, propsJson);
+  }
+
+  updateText(nodeId: number, content: string): void {
+    if (this.useBinary) {
+      this.pendingOps.push({ op: "UpdateText", nodeId, content });
+      return;
+    }
+    __react_update_text(this.props.rootId, nodeId, content);
+  }
+
+  destroyNode(nodeId: number): void {
+    if (this.useBinary) {
+      this.pendingOps.push({ op: "DestroyNode", nodeId });
+      return;
+    }
+    __react_destroy_node(this.props.rootId, nodeId);
+  }
+
+  flushBinaryCommit(): void {
+    if (!this.useBinary || this.pendingOps.length === 0) {
+      return;
+    }
+    const ops = this.pendingOps;
+    this.pendingOps = [];
+    ops.push({ op: "Commit" });
+    const bytes = encodeBatch(this.props.rootId, ops);
+    __react_commit_ops(bytes);
   }
 
   // -------------------
@@ -421,14 +536,14 @@ class BevyHostConfig {
         return;
       }
       this.instanceMap.delete(instance.nodeId);
-      __react_destroy_node(this.props.rootId, instance.nodeId);
+      this.destroyNode(instance.nodeId);
       return;
     }
     this.instanceMap.delete(instance.nodeId);
     // Host text nodes skip detachDeletedInstance in react-reconciler;
     // host components land here. Destroy is also called from removeChild
     // so this is safe if the entity was already despawned.
-    __react_destroy_node(this.props.rootId, instance.nodeId);
+    this.destroyNode(instance.nodeId);
   };
 
   // -------------------
@@ -450,7 +565,7 @@ class BevyHostConfig {
     _hostContext: HostContext
   ): Instance => {
     const propsJson = serializeProps(props, type);
-    const nodeId = __react_create_node(this.props.rootId, type, propsJson);
+    const nodeId = this.createNode(type, propsJson);
 
     const instance = {
       nodeId,
@@ -515,7 +630,7 @@ class BevyHostConfig {
     }
 
     const propsJson = serializeProps(toSend, type);
-    __react_update_node(this.props.rootId, instance.nodeId, propsJson);
+    this.updateNode(instance.nodeId, propsJson);
     instance.props = newProps;
   }
 
@@ -526,23 +641,19 @@ class BevyHostConfig {
   ): void => {
     textInstance.text = newText;
     if (textInstance.textHost) {
-      flushBevyTextContent(this.props.rootId, textInstance.textHost);
+      flushBevyTextContent(this, textInstance.textHost);
       return;
     }
     if (textInstance.nodeId < 0) {
       return;
     }
-    __react_update_text(this.props.rootId, textInstance.nodeId, newText);
+    this.updateText(textInstance.nodeId, newText);
   }
 
   resetTextContent = (instance: Instance): void => {
     if (instance.type === "bevy-text") {
       instance.textSlots = [];
-      __react_update_node(
-        this.props.rootId,
-        instance.nodeId,
-        JSON.stringify({ content: "" })
-      );
+      this.updateNode(instance.nodeId, JSON.stringify({ content: "" }));
     }
   }
 
@@ -567,20 +678,20 @@ class BevyHostConfig {
       child.nodeId = parent.nodeId;
       parent.textSlots = parent.textSlots ?? [];
       parent.textSlots.push(child);
-      flushBevyTextContent(this.props.rootId, parent);
+      flushBevyTextContent(this, parent);
       return;
     }
 
     if (isTextInstance(child)) {
       if (child.nodeId < 0) {
-        child.nodeId = __react_create_text(this.props.rootId, child.text);
+        child.nodeId = this.createText(child.text);
         this.instanceMap.set(child.nodeId, child);
       }
-      __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
+      this.appendChildRpc(parent.nodeId, child.nodeId);
       return;
     }
 
-    __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
+    this.appendChildRpc(parent.nodeId, child.nodeId);
     child.parentId = parent.nodeId;
     parent.children.push(child);
   }
@@ -598,19 +709,19 @@ class BevyHostConfig {
         const host = child.textHost;
         host.textSlots = (host.textSlots ?? []).filter((s) => s !== child);
         child.textHost = undefined;
-        flushBevyTextContent(this.props.rootId, host);
+        flushBevyTextContent(this, host);
         return;
       }
       if (child.nodeId >= 0) {
-        __react_remove_child(this.props.rootId, container.rootId, child.nodeId);
-        __react_destroy_node(this.props.rootId, child.nodeId);
+        this.removeChildRpc(container.rootId, child.nodeId);
+        this.destroyNode(child.nodeId);
         this.instanceMap.delete(child.nodeId);
       }
       return;
     }
 
-    __react_remove_child(this.props.rootId, container.rootId, child.nodeId);
-    __react_destroy_node(this.props.rootId, child.nodeId);
+    this.removeChildRpc(container.rootId, child.nodeId);
+    this.destroyNode(child.nodeId);
     this.instanceMap.delete(child.nodeId);
   }
 
@@ -621,21 +732,21 @@ class BevyHostConfig {
     if (isTextInstance(child) && child.textHost === parent) {
       parent.textSlots = (parent.textSlots ?? []).filter((s) => s !== child);
       child.textHost = undefined;
-      flushBevyTextContent(this.props.rootId, parent);
+      flushBevyTextContent(this, parent);
       return;
     }
 
     if (isTextInstance(child)) {
       if (child.nodeId >= 0) {
-        __react_remove_child(this.props.rootId, parent.nodeId, child.nodeId);
-        __react_destroy_node(this.props.rootId, child.nodeId);
+        this.removeChildRpc(parent.nodeId, child.nodeId);
+        this.destroyNode(child.nodeId);
         this.instanceMap.delete(child.nodeId);
       }
       return;
     }
 
-    __react_remove_child(this.props.rootId, parent.nodeId, child.nodeId);
-    __react_destroy_node(this.props.rootId, child.nodeId);
+    this.removeChildRpc(parent.nodeId, child.nodeId);
+    this.destroyNode(child.nodeId);
     this.instanceMap.delete(child.nodeId);
     delete child.parentId;
     const idx = parent.children.findIndex((c) => c.nodeId === child.nodeId);
@@ -650,13 +761,13 @@ class BevyHostConfig {
   ): void => {
     if (isTextInstance(child)) {
       if (child.nodeId < 0) {
-        child.nodeId = __react_create_text(this.props.rootId, child.text);
+        child.nodeId = this.createText(child.text);
         this.instanceMap.set(child.nodeId, child);
       }
-      __react_append_child(this.props.rootId, container.rootId, child.nodeId);
+      this.appendChildRpc(container.rootId, child.nodeId);
       return;
     }
-    __react_append_child(this.props.rootId, container.rootId, child.nodeId);
+    this.appendChildRpc(container.rootId, child.nodeId);
     child.parentId = undefined;
   }
 
@@ -681,20 +792,19 @@ class BevyHostConfig {
       } else {
         parent.textSlots.push(child);
       }
-      flushBevyTextContent(this.props.rootId, parent);
+      flushBevyTextContent(this, parent);
       return;
     }
 
     if (isTextInstance(child) && child.nodeId < 0) {
-      child.nodeId = __react_create_text(this.props.rootId, child.text);
+      child.nodeId = this.createText(child.text);
       this.instanceMap.set(child.nodeId, child);
     }
     if (isTextInstance(beforeChild) && beforeChild.nodeId < 0) {
       return;
     }
 
-    __react_insert_before(
-      this.props.rootId,
+    this.insertBeforeRpc(
       parent.nodeId,
       child.nodeId,
       beforeChild.nodeId
@@ -723,11 +833,10 @@ class BevyHostConfig {
     beforeChild: Instance | TextInstance
   ): void => {
     if (isTextInstance(child) && child.nodeId < 0) {
-      child.nodeId = __react_create_text(this.props.rootId, child.text);
+      child.nodeId = this.createText(child.text);
       this.instanceMap.set(child.nodeId, child);
     }
-    __react_insert_before(
-      this.props.rootId,
+    this.insertBeforeRpc(
       container.rootId,
       child.nodeId,
       beforeChild.nodeId
@@ -755,11 +864,13 @@ class BevyHostConfig {
     return false;
   }
 
-  prepareForCommit(_containerInfo: Container): Record<string, unknown> | null {
+  prepareForCommit = (_containerInfo: Container): Record<string, unknown> | null => {
     return null;
   }
 
-  resetAfterCommit(_containerInfo: Container): void {}
+  resetAfterCommit = (_containerInfo: Container): void => {
+    this.flushBinaryCommit();
+  }
 
   // -------------------
   // Misc
@@ -803,6 +914,12 @@ class BevyHostConfig {
 type ReconcilerProps = {
   rootId: string;
   instanceMap: BevyInstanceMap;
+  /**
+   * When true, batch host mutations into one BRRP frame per commit.
+   * When omitted, falls back to `globalThis.__BEVY_REACT_BINARY_OPS`.
+   * Default remains the per-op enum natives.
+   */
+  binaryOps?: boolean;
 };
 
 /**
@@ -811,3 +928,4 @@ type ReconcilerProps = {
 export const createBevyReconciler = (props: ReconcilerProps) => Reconciler(new BevyHostConfig(props) as any);
 
 export type BevyReconciler = ReturnType<typeof createBevyReconciler>;
+export type { ReconcilerProps as BevyReconcilerProps };

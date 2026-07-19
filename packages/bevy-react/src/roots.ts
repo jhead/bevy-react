@@ -12,12 +12,22 @@ import {
 /** Host container: parent id 0 maps to the Bevy ReactRoot entity. */
 export type HostContainer = { rootId: number };
 
+export type BevyRootOptions = {
+  /**
+   * Batch commits into BRRP via `__react_commit_ops`.
+   * Requires host `--features binary_ops`. When omitted, reads
+   * `globalThis.__BEVY_REACT_BINARY_OPS`.
+   */
+  binaryOps?: boolean;
+};
+
 export type BevyRootState = {
   rootId: string;
   container: HostContainer;
   reconciler: BevyReconciler;
   fiberRoot: ReturnType<BevyReconciler["createContainer"]>;
   instanceMap: BevyInstanceMap;
+  binaryOps?: boolean;
 };
 
 const roots = new Map<string, BevyRootState>();
@@ -50,14 +60,21 @@ export { setInstanceLookup };
  * Ensure a fiber container + instance map exist for `rootId`.
  * Creates them on first use; subsequent calls reuse the same state.
  */
-export function ensureRoot(rootId: string): BevyRootState {
+export function ensureRoot(
+  rootId: string,
+  options?: BevyRootOptions
+): BevyRootState {
   const existing = roots.get(rootId);
   if (existing) {
     return existing;
   }
 
   const instanceMap: BevyInstanceMap = new Map();
-  const reconciler = createBevyReconciler({ rootId, instanceMap });
+  const reconciler = createBevyReconciler({
+    rootId,
+    instanceMap,
+    binaryOps: options?.binaryOps,
+  });
   // Host container parent id is always 0 (the Bevy ReactRoot entity for this root).
   const container: HostContainer = { rootId: 0 };
 
@@ -83,6 +100,7 @@ export function ensureRoot(rootId: string): BevyRootState {
     reconciler,
     fiberRoot,
     instanceMap,
+    binaryOps: options?.binaryOps,
   };
   roots.set(rootId, state);
   return state;
@@ -91,8 +109,12 @@ export function ensureRoot(rootId: string): BevyRootState {
 /**
  * Mount or update the React element tree for a root.
  */
-export function renderRoot(element: ReactNode, rootId: string): void {
-  const root = ensureRoot(rootId);
+export function renderRoot(
+  element: ReactNode,
+  rootId: string,
+  options?: BevyRootOptions
+): void {
+  const root = ensureRoot(rootId, options);
   root.reconciler.updateContainer(
     withErrorBoundary(element),
     root.fiberRoot,

@@ -93,15 +93,15 @@ Skip a visual designer. `:8098` is an RDT-shaped inspector bridge, not `npx reac
 - [x] Component gallery example (`examples/gallery`)
 - [ ] Drop-in `react-devtools-core` / Chrome extension on `:8097` (blocked by Boa init order + Int32 ops codec)
 
-### 7. Binary op protocol — *partial* (codec; reconciler not default)
+### 7. Binary op protocol — *partial* (codec + opt-in reconciler; not default)
 
-Fabric-style binary ops. Schema + Rust round-trip codec landed; reconciler still uses enum natives by default.
+Fabric-style binary ops. Schema + Rust/TS codecs landed; reconciler binary path is opt-in (`binaryOps` / `__BEVY_REACT_BINARY_OPS`). Enum natives remain the default until soak.
 
 - [x] Design / `plugin/src/react/proto/` schema for batched binary mutations ([PROTO.md](PROTO.md))
 - [x] Sit beside today's in-process enum RPC (`binary_ops` → `__react_commit_ops`)
-- [ ] TS reconciler encodes commits into BRRP (stub: `packages/bevy-react/src/protocol.ts`)
-- [ ] Optional string-table interning (`FLAG_STRING_TABLE`)
-- [ ] Make binary the default hot path once TS encoder + soak tests land
+- [x] TS reconciler encodes commits into BRRP (`packages/bevy-react/src/protocol.ts` + commit batching)
+- [x] Optional string-table interning (`FLAG_STRING_TABLE`) in Rust + TS encoders
+- [ ] Make binary the default hot path once soak tests land
 
 ---
 

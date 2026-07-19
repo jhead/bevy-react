@@ -55,7 +55,7 @@ impl ReactClientReceiver {
     /// Try to receive the next message without blocking
     pub fn try_recv(&self) -> Option<ReactClientProto> {
         let rx = self.rx.lock().ok()?;
-        rx.try_recv().ok()  
+        rx.try_recv().ok()
     }
 }
 
@@ -76,6 +76,13 @@ impl ReactClient {
         NODE_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    /// Send an RPC message; log and drop if the Bevy receiver is gone.
+    fn send(&self, msg: ReactClientProto) {
+        if let Err(e) = self.tx.send(msg) {
+            log::error!("React RPC channel closed: {e}");
+        }
+    }
+
     /// Create a new UI node
     pub fn create_node(&self, root_id: String, node_type: String, props_json: String) -> u64 {
         let node_id = self.next_id();
@@ -85,14 +92,12 @@ impl ReactClient {
             node_type,
             props_json
         );
-        self.tx
-            .send(ReactClientProto::CreateNode {
-                root_id,
-                node_id,
-                node_type,
-                props_json,
-            })
-            .expect("Failed to send CreateNode");
+        self.send(ReactClientProto::CreateNode {
+            root_id,
+            node_id,
+            node_type,
+            props_json,
+        });
         node_id
     }
 
@@ -104,9 +109,11 @@ impl ReactClient {
             node_id,
             content
         );
-        self.tx
-            .send(ReactClientProto::CreateText { root_id, node_id, content })
-            .expect("Failed to send CreateText");
+        self.send(ReactClientProto::CreateText {
+            root_id,
+            node_id,
+            content,
+        });
         node_id
     }
 
@@ -117,13 +124,11 @@ impl ReactClient {
             parent_id,
             child_id
         );
-        self.tx
-            .send(ReactClientProto::AppendChild {
-                root_id,
-                parent_id,
-                child_id,
-            })
-            .expect("Failed to send AppendChild");
+        self.send(ReactClientProto::AppendChild {
+            root_id,
+            parent_id,
+            child_id,
+        });
     }
 
     /// Insert a child before another child
@@ -134,14 +139,12 @@ impl ReactClient {
             child_id,
             before_id
         );
-        self.tx
-            .send(ReactClientProto::InsertBefore {
-                root_id,
-                parent_id,
-                child_id,
-                before_id,
-            })
-            .expect("Failed to send InsertBefore");
+        self.send(ReactClientProto::InsertBefore {
+            root_id,
+            parent_id,
+            child_id,
+            before_id,
+        });
     }
 
     /// Remove a child from a parent
@@ -151,13 +154,11 @@ impl ReactClient {
             parent_id,
             child_id
         );
-        self.tx
-            .send(ReactClientProto::RemoveChild {
-                root_id,
-                parent_id,
-                child_id,
-            })
-            .expect("Failed to send RemoveChild");
+        self.send(ReactClientProto::RemoveChild {
+            root_id,
+            parent_id,
+            child_id,
+        });
     }
 
     /// Update node properties
@@ -167,43 +168,37 @@ impl ReactClient {
             node_id,
             props_json
         );
-        self.tx
-            .send(ReactClientProto::UpdateNode {
-                root_id,
-                node_id,
-                props_json,
-            })
-            .expect("Failed to send UpdateNode");
+        self.send(ReactClientProto::UpdateNode {
+            root_id,
+            node_id,
+            props_json,
+        });
     }
 
     /// Update text content
     pub fn update_text(&self, root_id: String, node_id: u64, content: String) {
         log::debug!("ReactClient::update_text id={} content={}", node_id, content);
-        self.tx
-            .send(ReactClientProto::UpdateText { root_id, node_id, content })
-            .expect("Failed to send UpdateText");
+        self.send(ReactClientProto::UpdateText {
+            root_id,
+            node_id,
+            content,
+        });
     }
 
     /// Destroy a node
     pub fn destroy_node(&self, root_id: String, node_id: u64) {
         log::debug!("ReactClient::destroy_node id={}", node_id);
-        self.tx
-            .send(ReactClientProto::DestroyNode { root_id, node_id })
-            .expect("Failed to send DestroyNode");
+        self.send(ReactClientProto::DestroyNode { root_id, node_id });
     }
 
     /// Clear the container
     pub fn clear_container(&self, root_id: String) {
         log::debug!("ReactClient::clear_container");
-        self.tx
-            .send(ReactClientProto::ClearContainer { root_id })
-            .expect("Failed to send ClearContainer");
+        self.send(ReactClientProto::ClearContainer { root_id });
     }
 
     /// Signal completion
     pub fn complete(&self) {
-        self.tx
-            .send(ReactClientProto::Complete)
-            .expect("Failed to send Complete");
+        self.send(ReactClientProto::Complete);
     }
 }

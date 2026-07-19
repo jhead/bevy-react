@@ -5,6 +5,7 @@ import {
   BRRP_VERSION,
   decodeBatch,
   encodeBatch,
+  isBinaryOpsEnabled,
   type BinaryOp,
 } from "../src/protocol";
 
@@ -146,5 +147,32 @@ describe("BRRP protocol", () => {
 
   it("rejects empty root id on encode", () => {
     expect(() => encodeBatch("", [{ op: "Commit" }])).toThrow(/EmptyRootId/);
+  });
+
+  it("isBinaryOpsEnabled auto-detects __react_commit_ops", () => {
+    const g = globalThis as typeof globalThis & Record<string, unknown>;
+    const prevFlag = g.__BEVY_REACT_BINARY_OPS;
+    const prevCommit = g.__react_commit_ops;
+    try {
+      delete g.__BEVY_REACT_BINARY_OPS;
+      delete g.__react_commit_ops;
+      expect(isBinaryOpsEnabled()).toBe(false);
+      expect(isBinaryOpsEnabled(true)).toBe(true);
+      expect(isBinaryOpsEnabled(false)).toBe(false);
+
+      g.__react_commit_ops = () => {};
+      expect(isBinaryOpsEnabled()).toBe(true);
+
+      g.__BEVY_REACT_BINARY_OPS = 0;
+      expect(isBinaryOpsEnabled()).toBe(false);
+      g.__BEVY_REACT_BINARY_OPS = 1;
+      expect(isBinaryOpsEnabled()).toBe(true);
+      expect(isBinaryOpsEnabled(false)).toBe(false);
+    } finally {
+      if (prevFlag === undefined) delete g.__BEVY_REACT_BINARY_OPS;
+      else g.__BEVY_REACT_BINARY_OPS = prevFlag;
+      if (prevCommit === undefined) delete g.__react_commit_ops;
+      else g.__react_commit_ops = prevCommit;
+    }
   });
 });

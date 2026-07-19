@@ -59,5 +59,10 @@ devtools-full = ["devtools", "egui"]
 # Emit TypeScript from Rust bridge types + command metadata (ts-rs).
 bridge-codegen = ["dep:ts-rs"]
 # Dual-path binary mutation batches (`__react_commit_ops` + BRRP codec).
-# Enum RPC remains default; see docs/PROTO.md.
+# When enabled, TS auto-detects `__react_commit_ops` and uses BRRP by default.
 binary_ops = []
+
+[[test]]
+name = "binary_ops_soak"
+path = "tests/binary_ops_soak.rs"
+required-features = ["binary_ops"]

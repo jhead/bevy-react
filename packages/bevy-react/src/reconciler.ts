@@ -916,8 +916,8 @@ type ReconcilerProps = {
   instanceMap: BevyInstanceMap;
   /**
    * When true, batch host mutations into one BRRP frame per commit.
-   * When omitted, falls back to `globalThis.__BEVY_REACT_BINARY_OPS`.
-   * Default remains the per-op enum natives.
+   * When omitted: `__BEVY_REACT_BINARY_OPS`, else auto-detect
+   * `__react_commit_ops`. Pass `false` to force per-op enum natives.
    */
   binaryOps?: boolean;
 };

@@ -15,8 +15,8 @@ export type HostContainer = { rootId: number };
 export type BevyRootOptions = {
   /**
    * Batch commits into BRRP via `__react_commit_ops`.
-   * Requires host `--features binary_ops`. When omitted, reads
-   * `globalThis.__BEVY_REACT_BINARY_OPS`.
+   * When omitted: honors `__BEVY_REACT_BINARY_OPS`, else auto-detects
+   * `typeof __react_commit_ops === "function"`. Pass `false` to force enum.
    */
   binaryOps?: boolean;
 };

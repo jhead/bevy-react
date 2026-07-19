@@ -204,8 +204,8 @@ impl ReactClient {
 
     /// Decode a BRRP binary batch and enqueue the resulting RPC messages.
     ///
-    /// Used by the `binary_ops` feature path (`__react_commit_ops`). The existing
-    /// per-op native functions remain the default dual path.
+    /// Used by the `binary_ops` feature path (`__react_commit_ops`). Per-op
+    /// natives remain available as a dual path (force with `binaryOps: false`).
     ///
     /// Advances [`NODE_ID_COUNTER`] past any create ids so a later enum-path
     /// allocation cannot collide with JS-allocated binary ids.

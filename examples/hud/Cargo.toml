@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = "0.17.3"
-bevy_react = { path = "../../plugin", features = ["bridge-codegen"] }
+bevy_react = { path = "../../plugin", features = ["bridge-codegen", "binary_ops"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ts-rs = "12.0"

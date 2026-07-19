@@ -117,9 +117,10 @@ declare global {
   function __react_commit_ops(bytes: Uint8Array | ArrayBuffer): void;
 
   /**
-   * Opt-in flag for the TS reconciler binary commit path.
-   * Truthy: `true` | `1` | `"1"`. Ignored when `createBevyApp({ binaryOps })`
-   * / `createBevyReconciler({ binaryOps })` sets an explicit option.
+   * Override binary commit auto-detect.
+   * Truthy (`true` | `1` | `"1"`): force BRRP. Any other set value: force enum.
+   * Ignored when `createBevyApp({ binaryOps })` / `createBevyReconciler({ binaryOps })`
+   * sets an explicit option. When unset, binary is used iff `__react_commit_ops` exists.
    */
   // eslint-disable-next-line no-var
   var __BEVY_REACT_BINARY_OPS: boolean | number | string | undefined;

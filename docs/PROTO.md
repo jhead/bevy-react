@@ -2,7 +2,7 @@
 
 Bevy-React Render Protocol — a compact little-endian batch format for the hot React → Bevy mutation path (`CreateNode`, `UpdateNode`, `AppendChild`, …).
 
-Today the **default** path is still the in-process enum RPC (`ReactClientProto` over `mpsc`). BRRP sits **beside** that path: same semantics, denser framing. The TS reconciler can encode one commit into a BRRP frame when opted in.
+BRRP sits **beside** the in-process enum RPC (`ReactClientProto` over `mpsc`): same semantics, denser framing. When the host registers `__react_commit_ops` (`binary_ops` feature), the TS reconciler **auto-detects** it and uses BRRP by default.
 
 ## Status
 
@@ -12,33 +12,46 @@ Today the **default** path is still the in-process enum RPC (`ReactClientProto` 
 | Rust encode/decode (`plugin/src/react/proto/`) | Landed; unit-tested (inline + string table) |
 | Cargo feature `binary_ops` | Registers `__react_commit_ops` |
 | TS encode/decode (`packages/bevy-react/src/protocol.ts`) | Landed; golden-byte + round-trip tests |
-| TS reconciler binary commit path | Opt-in (`binaryOps` / `__BEVY_REACT_BINARY_OPS`) |
-| Default reconciler switched to binary | **Not yet** — enum natives remain default |
+| TS reconciler binary commit path | Default when `__react_commit_ops` exists |
+| Soak / integration | TS reconciler soak + `plugin/tests/binary_ops_soak.rs` |
 
 ## Enabling the binary hot path
 
-**Host** (required for `__react_commit_ops`):
+**Host** (registers `__react_commit_ops`):
 
 ```bash
 cargo build --manifest-path plugin/Cargo.toml --features binary_ops
+# examples: features = ["binary_ops"] on the bevy_react dependency
 ```
 
-**JS reconciler** (pick one):
+**JS reconciler** — no opt-in needed when the host has the feature:
+
+```
+Priority:
+  1. createBevyApp({ binaryOps }) / createBevyReconciler({ binaryOps })
+  2. globalThis.__BEVY_REACT_BINARY_OPS when set
+     (true | 1 | "1" → on; any other value → off)
+  3. typeof __react_commit_ops === "function" → on
+  4. else → enum natives
+```
+
+### Force the enum path
 
 ```js
-// Package option (preferred)
+createBevyApp(<App />, { binaryOps: false });
+// or
+globalThis.__BEVY_REACT_BINARY_OPS = 0; // also false / "0"
+```
+
+### Force binary without relying on auto-detect
+
+```js
 createBevyApp(<App />, { binaryOps: true });
 // or
-renderRoot(<App />, "root", { binaryOps: true });
-createBevyReconciler({ rootId, instanceMap, binaryOps: true });
+globalThis.__BEVY_REACT_BINARY_OPS = 1;
 ```
 
-```js
-// Global flag (Boa / Vite entry can set before createBevyApp)
-globalThis.__BEVY_REACT_BINARY_OPS = 1; // also true / "1"
-```
-
-When enabled, mutation RPCs are queued during the React commit and flushed once via `__react_commit_ops(Uint8Array)` from `resetAfterCommit`. Node ids are allocated on the JS side; the host advances its id counter so a later enum-path alloc cannot collide.
+When binary is active, mutation RPCs are queued during the React commit and flushed once via `__react_commit_ops(Uint8Array)` from `resetAfterCommit`. Node ids are allocated on the JS side; the host advances its id counter so a later enum-path alloc cannot collide.
 
 ## Why custom binary (not protobuf)
 
@@ -117,8 +130,8 @@ The reconciler binary path currently uses **inline strings** (`flags == 0`) for 
 
 | Path | How |
 |---|---|
-| **Enum (default)** | `__react_create_node`, `__react_append_child`, … → `ReactClient::send` |
-| **Binary (opt-in)** | Queue ops → `encodeBatch` → `__react_commit_ops` → `decode_protos` → same channel |
+| **Binary (default when host has `binary_ops`)** | Queue ops → `encodeBatch` → `__react_commit_ops` → `decode_protos` → same channel |
+| **Enum** | `__react_create_node`, `__react_append_child`, … → `ReactClient::send` |
 
 ## Rust API
 

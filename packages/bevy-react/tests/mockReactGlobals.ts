@@ -1,6 +1,9 @@
 /**
  * Mock harness for the Rust-injected `__react_*` globals used by the reconciler.
  * Call `installMockReactGlobals()` in `beforeEach` before exercising the reconciler.
+ *
+ * By default installs `__react_commit_ops` (simulates host `--features binary_ops`).
+ * Pass `{ commitOps: false }` to omit it and exercise the enum-only host.
  */
 
 export type ReactCall =
@@ -42,7 +45,15 @@ export interface MockReactGlobals {
   duplicateDestroys: () => number[];
 }
 
-export function installMockReactGlobals(): MockReactGlobals {
+export type MockReactGlobalsOptions = {
+  /** Install `__react_commit_ops` (default true). */
+  commitOps?: boolean;
+};
+
+export function installMockReactGlobals(
+  options?: MockReactGlobalsOptions
+): MockReactGlobals {
+  const withCommitOps = options?.commitOps !== false;
   const calls: ReactCall[] = [];
   const liveIds = new Set<number>();
   const destroyCounts = new Map<number, number>();
@@ -118,13 +129,17 @@ export function installMockReactGlobals(): MockReactGlobals {
     calls.push({ op: "clear_container", rootId });
   };
 
-  g.__react_commit_ops = (bytes: Uint8Array | ArrayBuffer) => {
-    const view =
-      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    const copy = new Uint8Array(view);
-    commitFrames.push(copy);
-    calls.push({ op: "commit_ops", bytes: copy });
-  };
+  if (withCommitOps) {
+    g.__react_commit_ops = (bytes: Uint8Array | ArrayBuffer) => {
+      const view =
+        bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      const copy = new Uint8Array(view);
+      commitFrames.push(copy);
+      calls.push({ op: "commit_ops", bytes: copy });
+    };
+  } else {
+    delete g.__react_commit_ops;
+  }
 
   return {
     calls,

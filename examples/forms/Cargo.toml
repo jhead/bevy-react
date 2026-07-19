@@ -5,4 +5,4 @@ edition = "2024"
 
 [dependencies]
 bevy = "0.17.3"
-bevy_react = { path = "../../plugin" }
+bevy_react = { path = "../../plugin", features = ["binary_ops"] }

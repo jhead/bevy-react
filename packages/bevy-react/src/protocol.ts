@@ -4,9 +4,9 @@
  * Wire layout must match `plugin/src/react/proto/codec.rs` exactly.
  * See docs/PROTO.md.
  *
- * Default reconciler path still uses per-op natives (`__react_create_node`, …).
- * Enable the binary hot path with `__BEVY_REACT_BINARY_OPS=1` (or package option)
- * when the host is built with `--features binary_ops`.
+ * When `__react_commit_ops` is present (host `--features binary_ops`), the
+ * reconciler defaults to BRRP batches. Force the enum path with
+ * `binaryOps: false` or `__BEVY_REACT_BINARY_OPS = 0`.
  */
 
 /** Little-endian ASCII "BRRP" (`B` at the low byte). Matches Rust `MAGIC`. */
@@ -75,17 +75,29 @@ export class DecodeError extends Error {
 /**
  * Resolve whether the reconciler should batch commits into BRRP.
  *
- * Priority: explicit option → `globalThis.__BEVY_REACT_BINARY_OPS` → false.
- * Truthy values: `true`, `1`, `"1"`.
+ * Priority:
+ * 1. Explicit `binaryOps` option
+ * 2. Explicit `globalThis.__BEVY_REACT_BINARY_OPS` when set
+ *    (`true` / `1` / `"1"` → on; anything else → off)
+ * 3. Auto-detect: `typeof __react_commit_ops === "function"`
+ * 4. Otherwise false (enum natives)
  */
 export function isBinaryOpsEnabled(option?: boolean): boolean {
   if (option === true) return true;
   if (option === false) return false;
   const g = globalThis as typeof globalThis & {
     __BEVY_REACT_BINARY_OPS?: unknown;
+    __react_commit_ops?: unknown;
   };
-  const v = g.__BEVY_REACT_BINARY_OPS;
-  return v === true || v === 1 || v === "1";
+  if (Object.prototype.hasOwnProperty.call(g, "__BEVY_REACT_BINARY_OPS")) {
+    const v = g.__BEVY_REACT_BINARY_OPS;
+    if (v === undefined) {
+      // fall through to auto-detect
+    } else {
+      return v === true || v === 1 || v === "1";
+    }
+  }
+  return typeof g.__react_commit_ops === "function";
 }
 
 /** @deprecated Use {@link encodeBatch}. Kept for older imports. */

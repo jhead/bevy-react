@@ -19,10 +19,17 @@ type Renderer = {
   unmount: () => void;
 };
 
-function createRenderer(mock: MockReactGlobals): Renderer {
+function createRenderer(
+  mock: MockReactGlobals,
+  options?: { binaryOps?: boolean }
+): Renderer {
   mock.reset();
   const instanceMap: BevyInstanceMap = new Map();
-  const reconciler = createBevyReconciler({ rootId: ROOT_ID, instanceMap });
+  const reconciler = createBevyReconciler({
+    rootId: ROOT_ID,
+    instanceMap,
+    binaryOps: options?.binaryOps,
+  });
   // tag 0 historically meant LegacyRoot; react-reconciler 0.32 always creates a
   // concurrent root, so use updateContainerSync + flushSyncWork for tests.
   const fiberRoot = reconciler.createContainer(
@@ -66,7 +73,8 @@ describe("reconciler host config RPC sequences", () => {
   let mock: MockReactGlobals;
 
   beforeEach(() => {
-    mock = installMockReactGlobals();
+    // Enum-only host (no `__react_commit_ops`) — exercises the legacy path.
+    mock = installMockReactGlobals({ commitOps: false });
   });
 
   it("mounts a node tree and appends children via __react_* calls", () => {
@@ -477,41 +485,20 @@ describe("reconciler binary commit path", () => {
   beforeEach(() => {
     mock = installMockReactGlobals();
     resetBinaryNodeIdCounter(1);
+    const g = globalThis as typeof globalThis & {
+      __BEVY_REACT_BINARY_OPS?: unknown;
+    };
+    delete g.__BEVY_REACT_BINARY_OPS;
   });
 
-  function createBinaryRenderer(): Renderer {
+  function createBinaryRenderer(options?: { binaryOps?: boolean }): Renderer {
     mock.reset();
     resetBinaryNodeIdCounter(1);
-    const instanceMap: BevyInstanceMap = new Map();
-    const reconciler = createBevyReconciler({
-      rootId: ROOT_ID,
-      instanceMap,
-      binaryOps: true,
-    });
-    const fiberRoot = reconciler.createContainer(
-      CONTAINER,
-      0,
-      null,
-      false,
-      null,
-      "",
-      () => {},
-      null
-    );
-
-    return {
-      render(element: React.ReactNode) {
-        reconciler.updateContainerSync(element, fiberRoot, null, null);
-        reconciler.flushSyncWork();
-      },
-      unmount() {
-        reconciler.updateContainerSync(null, fiberRoot, null, null);
-        reconciler.flushSyncWork();
-      },
-    };
+    return createRenderer(mock, options);
   }
 
-  it("batches mount into one __react_commit_ops BRRP frame", () => {
+  it("auto-detects __react_commit_ops and batches into one BRRP frame", () => {
+    // No explicit binaryOps — presence of __react_commit_ops enables binary.
     const { render } = createBinaryRenderer();
     render(
       React.createElement(
@@ -543,37 +530,87 @@ describe("reconciler binary commit path", () => {
     );
   });
 
-  it("respects globalThis.__BEVY_REACT_BINARY_OPS", () => {
+  it("forces enum when binaryOps: false despite __react_commit_ops", () => {
+    const { render } = createBinaryRenderer({ binaryOps: false });
+    render(React.createElement("bevy-node", null));
+    expect(mock.ops()).toEqual(["create_node", "append_child"]);
+    expect(mock.commitFrames).toHaveLength(0);
+  });
+
+  it("forces enum via __BEVY_REACT_BINARY_OPS = 0", () => {
     const g = globalThis as typeof globalThis & {
       __BEVY_REACT_BINARY_OPS?: unknown;
     };
-    g.__BEVY_REACT_BINARY_OPS = 1;
+    g.__BEVY_REACT_BINARY_OPS = 0;
     try {
-      mock.reset();
-      resetBinaryNodeIdCounter(1);
-      const instanceMap: BevyInstanceMap = new Map();
-      // No explicit binaryOps — should pick up the global.
-      const reconciler = createBevyReconciler({ rootId: ROOT_ID, instanceMap });
-      const fiberRoot = reconciler.createContainer(
-        CONTAINER,
-        0,
-        null,
-        false,
-        null,
-        "",
-        () => {},
-        null
-      );
-      reconciler.updateContainerSync(
-        React.createElement("bevy-node", null),
-        fiberRoot,
-        null,
-        null
-      );
-      reconciler.flushSyncWork();
-      expect(mock.ops()).toEqual(["commit_ops"]);
+      const { render } = createBinaryRenderer();
+      render(React.createElement("bevy-node", null));
+      expect(mock.ops()).toEqual(["create_node", "append_child"]);
     } finally {
       delete g.__BEVY_REACT_BINARY_OPS;
     }
+  });
+
+  it("respects explicit binaryOps: true", () => {
+    const { render } = createBinaryRenderer({ binaryOps: true });
+    render(React.createElement("bevy-node", null));
+    expect(mock.ops()).toEqual(["commit_ops"]);
+  });
+
+  it("soaks mount → update → reorder → remove across BRRP commits", () => {
+    const { render } = createBinaryRenderer();
+
+    render(
+      listTree([
+        { id: "a", label: "A" },
+        { id: "b", label: "B" },
+      ])
+    );
+    expect(mock.commitFrames).toHaveLength(1);
+    const mount = decodeBatch(mock.commitFrames[0]!);
+    expect(mount.ops.at(-1)).toEqual({ op: "Commit" });
+    expect(mount.ops.some((o) => o.op === "CreateNode")).toBe(true);
+
+    mock.reset();
+    render(
+      listTree([
+        { id: "a", label: "A2" },
+        { id: "b", label: "B" },
+        { id: "c", label: "C" },
+      ])
+    );
+    expect(mock.commitFrames).toHaveLength(1);
+    const update = decodeBatch(mock.commitFrames[0]!);
+    expect(update.ops.at(-1)).toEqual({ op: "Commit" });
+    expect(
+      update.ops.some((o) => o.op === "UpdateNode" || o.op === "CreateNode")
+    ).toBe(true);
+
+    mock.reset();
+    render(
+      listTree([
+        { id: "c", label: "C" },
+        { id: "a", label: "A2" },
+      ])
+    );
+    expect(mock.commitFrames).toHaveLength(1);
+    const reorder = decodeBatch(mock.commitFrames[0]!);
+    expect(reorder.ops.at(-1)).toEqual({ op: "Commit" });
+    expect(
+      reorder.ops.some(
+        (o) =>
+          o.op === "InsertBefore" ||
+          o.op === "RemoveChild" ||
+          o.op === "AppendChild" ||
+          o.op === "DestroyNode"
+      )
+    ).toBe(true);
+
+    mock.reset();
+    render(null);
+    expect(mock.commitFrames).toHaveLength(1);
+    const unmount = decodeBatch(mock.commitFrames[0]!);
+    expect(unmount.ops.at(-1)).toEqual({ op: "Commit" });
+    expect(unmount.ops.some((o) => o.op === "DestroyNode")).toBe(true);
   });
 });

@@ -3,10 +3,9 @@
 //! See [`docs/PROTO.md`](../../../../docs/PROTO.md) for the full schema, string-table
 //! interning, and frame-aligned commit model.
 //!
-//! The enum RPC path (`ReactClientProto` over `mpsc`) remains the default. This module
-//! encodes the same hot ops as a compact little-endian batch. Enable the `binary_ops`
-//! Cargo feature to register `__react_commit_ops`, then opt the TS reconciler in via
-//! `binaryOps: true` or `globalThis.__BEVY_REACT_BINARY_OPS = 1`.
+//! Enable the `binary_ops` Cargo feature to register `__react_commit_ops`. The TS
+//! reconciler then auto-detects that native and uses BRRP by default (force enum with
+//! `binaryOps: false` or `__BEVY_REACT_BINARY_OPS = 0`).
 
 mod codec;
 

@@ -11,6 +11,8 @@ declare global {
 
   function setTimeout(callback: () => void, delay?: number): number;
   function clearTimeout(handle: number): void;
+  function setInterval(callback: () => void, delay?: number): number;
+  function clearInterval(handle: number): void;
   
   /**
    * Creates a UI node (NodeBundle, ButtonBundle, ImageBundle, etc.)

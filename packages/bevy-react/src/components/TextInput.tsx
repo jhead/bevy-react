@@ -1,6 +1,11 @@
-import { useState, useCallback, type ReactNode } from "react";
+import { useState, useCallback, useEffect, type ReactNode } from "react";
 import type { BevyStyle, KeyboardEventData } from "../types";
-import { Node, Text } from "../components";
+import { Node, Text } from "./Intrinsics";
+
+/** In-process clipboard for Ctrl/Cmd+C/X/V (Boa has no navigator.clipboard). */
+let processClipboard = "";
+
+const CURSOR_BLINK_MS = 530;
 
 /**
  * Props for the TextInput component
@@ -18,12 +23,17 @@ export interface TextInputProps {
   textStyle?: BevyStyle & { fontSize?: number; color?: string };
   /** Style for placeholder text */
   placeholderStyle?: BevyStyle & { fontSize?: number; color?: string };
+  /** Style for the selection highlight background */
+  selectionStyle?: BevyStyle;
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
 }
 
 /**
- * Text input component with keyboard handling.
- * Renders a focusable container with text display and cursor.
- * Expects DOM-like logical `event.key` from the host (Character / " " / "Backspace" / …).
+ * Text input with caret, blink, Home/End/arrows, basic selection, and
+ * in-process clipboard (Ctrl/Cmd+C/X/V/A). Uses host logical `event.key`.
  */
 export function TextInput({
   value,
@@ -32,38 +42,218 @@ export function TextInput({
   style,
   textStyle,
   placeholderStyle,
+  selectionStyle,
 }: TextInputProps): ReactNode {
   const [isFocused, setIsFocused] = useState(false);
-  const [showCursor, _] = useState(true);
+  const [cursor, setCursor] = useState(() => value.length);
+  /** Selection anchor; `null` means no active selection range. */
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const [showCursor, setShowCursor] = useState(true);
+  /** Bumped to restart the blink interval after caret moves / edits. */
+  const [blinkEpoch, setBlinkEpoch] = useState(0);
+
+  // Keep caret in range when the controlled value shrinks.
+  useEffect(() => {
+    setCursor((c) => clamp(c, 0, value.length));
+    setAnchor((a) => (a == null ? null : clamp(a, 0, value.length)));
+  }, [value.length]);
+
+  // Cursor blink while focused; `blinkEpoch` restarts the timer after edits.
+  useEffect(() => {
+    if (!isFocused) {
+      setShowCursor(false);
+      return;
+    }
+    setShowCursor(true);
+    const id = setInterval(() => {
+      setShowCursor((v) => !v);
+    }, CURSOR_BLINK_MS);
+    return () => clearInterval(id);
+  }, [isFocused, blinkEpoch]);
+
+  const bumpBlink = useCallback(() => {
+    setBlinkEpoch((n) => n + 1);
+    setShowCursor(true);
+  }, []);
+
+  const selStart =
+    anchor == null ? cursor : Math.min(anchor, cursor);
+  const selEnd = anchor == null ? cursor : Math.max(anchor, cursor);
+  const hasSelection = anchor != null && selStart !== selEnd;
+
+  const replaceRange = useCallback(
+    (start: number, end: number, insert: string) => {
+      const next = value.slice(0, start) + insert + value.slice(end);
+      const nextCursor = start + insert.length;
+      onChange(next);
+      setCursor(nextCursor);
+      setAnchor(null);
+      bumpBlink();
+    },
+    [value, onChange, bumpBlink]
+  );
+
+  const moveCaret = useCallback(
+    (next: number, extend: boolean) => {
+      const clamped = clamp(next, 0, value.length);
+      if (extend) {
+        setAnchor((a) => (a == null ? cursor : a));
+        setCursor(clamped);
+      } else {
+        setAnchor(null);
+        setCursor(clamped);
+      }
+      bumpBlink();
+    },
+    [value.length, cursor, bumpBlink]
+  );
 
   const handleKeyDown = useCallback(
     (event: KeyboardEventData) => {
       const key = event.key;
+      const mod = !!(event.ctrlKey || event.metaKey);
+      const shift = !!event.shiftKey;
 
-      if (event.ctrlKey || event.altKey || event.metaKey) {
+      // Clipboard / select-all (Ctrl or Cmd)
+      if (mod && !event.altKey) {
+        const lower = key.length === 1 ? key.toLowerCase() : key;
+        if (lower === "a") {
+          setAnchor(0);
+          setCursor(value.length);
+          bumpBlink();
+          return;
+        }
+        if (lower === "c") {
+          if (hasSelection) {
+            processClipboard = value.slice(selStart, selEnd);
+          }
+          return;
+        }
+        if (lower === "x") {
+          if (hasSelection) {
+            processClipboard = value.slice(selStart, selEnd);
+            replaceRange(selStart, selEnd, "");
+          }
+          return;
+        }
+        if (lower === "v") {
+          if (processClipboard) {
+            if (hasSelection) {
+              replaceRange(selStart, selEnd, processClipboard);
+            } else {
+              replaceRange(cursor, cursor, processClipboard);
+            }
+          }
+          return;
+        }
+        // Ignore other modified keys (e.g. Ctrl+Arrow reserved for later)
+        return;
+      }
+
+      if (event.altKey) {
         return;
       }
 
       if (key === "Backspace") {
-        onChange(value.slice(0, -1));
+        if (hasSelection) {
+          replaceRange(selStart, selEnd, "");
+        } else if (cursor > 0) {
+          replaceRange(cursor - 1, cursor, "");
+        }
+        return;
+      }
+
+      if (key === "Delete") {
+        if (hasSelection) {
+          replaceRange(selStart, selEnd, "");
+        } else if (cursor < value.length) {
+          replaceRange(cursor, cursor + 1, "");
+        }
+        return;
+      }
+
+      if (key === "ArrowLeft") {
+        if (!shift && hasSelection) {
+          moveCaret(selStart, false);
+        } else {
+          moveCaret(cursor - 1, shift);
+        }
+        return;
+      }
+
+      if (key === "ArrowRight") {
+        if (!shift && hasSelection) {
+          moveCaret(selEnd, false);
+        } else {
+          moveCaret(cursor + 1, shift);
+        }
+        return;
+      }
+
+      if (key === "Home") {
+        moveCaret(0, shift);
+        return;
+      }
+
+      if (key === "End") {
+        moveCaret(value.length, shift);
         return;
       }
 
       if (key === "Escape") {
         setIsFocused(false);
+        setAnchor(null);
         return;
       }
 
-      // Logical key: single printable character (incl. space " ") or optional text field
+      // Ignore navigation / modifiers that aren't printable
+      if (
+        key === "ArrowUp" ||
+        key === "ArrowDown" ||
+        key === "Tab" ||
+        key === "Enter" ||
+        key === "Shift" ||
+        key === "Control" ||
+        key === "Alt" ||
+        key === "Meta"
+      ) {
+        return;
+      }
+
       const text =
-        event.text ??
-        (key.length === 1 ? key : null);
+        event.text ?? (key.length === 1 ? key : null);
       if (text) {
-        onChange(value + text);
+        if (hasSelection) {
+          replaceRange(selStart, selEnd, text);
+        } else {
+          replaceRange(cursor, cursor, text);
+        }
       }
     },
-    [value, onChange]
+    [
+      value,
+      cursor,
+      hasSelection,
+      selStart,
+      selEnd,
+      replaceRange,
+      moveCaret,
+      bumpBlink,
+    ]
   );
+
+  const handleFocus = useCallback(() => {
+    setIsFocused(true);
+    setCursor(value.length);
+    setAnchor(null);
+    bumpBlink();
+  }, [value.length, bumpBlink]);
+
+  const handleBlur = useCallback(() => {
+    setIsFocused(false);
+    setAnchor(null);
+    setShowCursor(false);
+  }, []);
 
   const displayValue = value || "";
   const showPlaceholder = !value && placeholder;
@@ -77,6 +267,7 @@ export function TextInput({
     borderColor: isFocused ? "#6a6aff" : "#4a4a5a",
     minWidth: 120,
     minHeight: 36,
+    overflow: "hidden",
     ...style,
   };
 
@@ -86,44 +277,82 @@ export function TextInput({
     ...textStyle,
   };
 
-  const defaultPlaceholderStyle: BevyStyle & { fontSize?: number; color?: string } = {
+  const defaultPlaceholderStyle: BevyStyle & {
+    fontSize?: number;
+    color?: string;
+  } = {
     fontSize: 16,
     color: "#666666",
     ...placeholderStyle,
   };
 
-  console.log("TextInput", { showPlaceholder, displayValue, isFocused, showCursor });
+  const fontSize = defaultTextStyle.fontSize ?? 16;
+  const cursorVisible = isFocused && showCursor && !hasSelection;
+
+  const before = hasSelection
+    ? displayValue.slice(0, selStart)
+    : displayValue.slice(0, cursor);
+  const selected = hasSelection
+    ? displayValue.slice(selStart, selEnd)
+    : "";
+  const after = hasSelection
+    ? displayValue.slice(selEnd)
+    : displayValue.slice(cursor);
 
   return (
     <bevy-text-input
       style={containerStyle}
-      onFocus={() => setIsFocused(true)}
-      onBlur={() => setIsFocused(false)}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
       onKeyDown={handleKeyDown}
     >
-      {/* Cursor before text - shown when focused with placeholder */}
-      <Node
-        style={{
-          width: isFocused && showCursor && showPlaceholder ? 2 : 0,
-          height: defaultTextStyle.fontSize ?? 16,
-          backgroundColor: "#ffffff",
-          marginRight: isFocused && showCursor && showPlaceholder ? 4 : 0,
-        }}
-      />
       {showPlaceholder ? (
-        <Text style={defaultPlaceholderStyle}>{placeholder}</Text>
+        <>
+          <Node
+            style={{
+              width: cursorVisible ? 2 : 0,
+              height: fontSize,
+              backgroundColor: "#ffffff",
+              marginRight: cursorVisible ? 2 : 0,
+            }}
+          />
+          <Text style={defaultPlaceholderStyle}>{placeholder}</Text>
+        </>
       ) : (
-        <Text style={defaultTextStyle}>{displayValue}</Text>
+        <>
+          {before ? <Text style={defaultTextStyle}>{before}</Text> : null}
+          {hasSelection ? (
+            <Node
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                backgroundColor: "#4a6aff",
+                ...selectionStyle,
+              }}
+            >
+              <Text
+                style={{
+                  ...defaultTextStyle,
+                  color: "#ffffff",
+                }}
+              >
+                {selected}
+              </Text>
+            </Node>
+          ) : (
+            <Node
+              style={{
+                width: cursorVisible ? 2 : 0,
+                height: fontSize,
+                backgroundColor: "#ffffff",
+                marginLeft: before ? 1 : 0,
+                marginRight: after ? 1 : 0,
+              }}
+            />
+          )}
+          {after ? <Text style={defaultTextStyle}>{after}</Text> : null}
+        </>
       )}
-      {/* Cursor after text - shown when focused with actual content */}
-      <Node
-        style={{
-          width: isFocused && showCursor && !showPlaceholder ? 2 : 0,
-          height: defaultTextStyle.fontSize ?? 16,
-          backgroundColor: "#ffffff",
-          marginLeft: isFocused && showCursor && !showPlaceholder ? 1 : 0,
-        }}
-      />
     </bevy-text-input>
   );
 }

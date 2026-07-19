@@ -50,7 +50,8 @@ fn sync_js_error_overlay(
     let message = format!("{title}\n{}", record.message);
     let stack = record
         .stack
-        .clone()
+        .as_deref()
+        .map(format_stack_for_overlay)
         .unwrap_or_else(|| "(no stack)".to_string());
 
     if overlay.is_empty() {
@@ -106,6 +107,22 @@ fn format_title(source: JsErrorSource) -> String {
         JsErrorSource::React => "React error",
     };
     format!("JS Error — {label}")
+}
+
+/// Prefer readable stacks in the overlay (source-mapped frames already applied
+/// by [`crate::js::sourcemap_enrich`] before the record reaches Bevy).
+fn format_stack_for_overlay(stack: &str) -> String {
+    let mut lines: Vec<&str> = stack.lines().collect();
+    // Cap extreme dumps so the overlay stays usable.
+    const MAX_LINES: usize = 80;
+    if lines.len() > MAX_LINES {
+        lines.truncate(MAX_LINES);
+        let mut out = lines.join("\n");
+        out.push_str("\n… (stack truncated)");
+        out
+    } else {
+        lines.join("\n")
+    }
 }
 
 fn spawn_overlay(commands: &mut Commands, message: &str, stack: &str) {

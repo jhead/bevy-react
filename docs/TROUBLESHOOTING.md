@@ -30,22 +30,30 @@ already logs via `console.error` and feeds the same overlay.
 
 ### What stacks look like
 
-Stacks are best-effort:
+Stacks are enriched when possible:
 
-- Prefer the JS `Error.stack` when Boa provides one
-- Append Boa VM frame names when available
+- Prefer Boa’s `Display` / shadow-stack frames (`at name (url:line:col)`) when
+  the VM attached a backtrace
+- Fall back to JS `Error.stack` when present
+- Append current VM call frames via `CallFrame::position()` (path + line/col
+  for Vite-loaded modules)
 - React also includes a `Component stack:` section from the error boundary
 
-Boa often emits VM-style frames (function names) rather than full
-`file:line:column` browser stacks.
+Bare function-name frames (no location) still cannot be symbolicated.
 
 ### Source maps
 
-Examples enable Vite `sourcemap: true`. The host tries to rewrite frames that
-look like `url:line:column` by fetching `{url}.map` (file:// or http(s) with
-the crate `fetch` feature).
+Examples enable Vite `sourcemap: true`. When a frame includes
+`url:line:column`, the host:
 
-**Limitation:** many Boa stacks lack URL locations, so maps may not apply.
-When a frame *does* include a Vite URL, mapping is attempted; otherwise the
-raw stack is shown. See `plugin/src/js/sourcemap_enrich.rs` for the hook /
-TODO (cache maps, honour `sourceMappingURL`, fuller Vite HMR symbolication).
+1. Canonicalizes the URL (fixes Path-collapsed `http:/`, strips `?t=` HMR query)
+2. Fetches the script and honours `//# sourceMappingURL=` (relative, absolute,
+   or `data:` inline maps)
+3. Falls back to `{url}.map`
+4. Caches decoded maps per URL for the process lifetime
+
+Requires the crate `fetch` feature for `http(s)` Vite URLs (`file://` always
+works). See `plugin/src/js/sourcemap_enrich.rs`.
+
+**Remaining gap:** if Boa only reports a function name with no path, there is
+nothing to map. Prefer throwing real `Error`s so the VM attaches locations.

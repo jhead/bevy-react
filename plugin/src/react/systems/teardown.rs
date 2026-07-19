@@ -10,9 +10,9 @@ use crate::react::systems::types::*;
 /// Runs while component data is still readable (`Remove` fires before the remove).
 pub fn on_react_root_removed(
     remove: On<Remove, ReactRoot>,
-    roots: Query<(
+    mut roots: Query<(
         &ReactRoot,
-        Option<&ReactContext>,
+        Option<&mut ReactContext>,
         Option<&ReactScriptSource>,
     )>,
     mut root_map: ResMut<ReactRootMap>,
@@ -21,7 +21,7 @@ pub fn on_react_root_removed(
     js_client: Option<Res<JsClientResource>>,
 ) {
     let entity = remove.entity;
-    let Ok((root, context, source)) = roots.get(entity) else {
+    let Ok((root, context, source)) = roots.get_mut(entity) else {
         return;
     };
 
@@ -29,6 +29,7 @@ pub fn on_react_root_removed(
     root_map.roots.remove(&root_id);
 
     let node_entities: Vec<Entity> = context
+        .as_ref()
         .map(|ctx| ctx.nodes.values().copied().collect())
         .unwrap_or_default();
 
@@ -48,6 +49,11 @@ pub fn on_react_root_removed(
         if let Ok(mut entity_commands) = commands.get_entity(node_entity) {
             entity_commands.try_despawn();
         }
+    }
+
+    if let Some(mut context) = context {
+        context.nodes.clear();
+        context.root = None;
     }
 
     // Notify JS so fiber / instance maps for this root are dropped. Host destroy

@@ -73,16 +73,22 @@ export type { BevyHostInstance, EntityId } from "./entity";
 export {
   BEVY_REACT_DEVTOOLS_DEFAULT_URL,
   BEVY_REACT_DEVTOOLS_PORT,
+  BEVY_RDT_BRIDGE_PROTOCOL,
   connectDevToolsBridge,
   disconnectDevToolsBridge,
   getDevToolsSnapshot,
   getDevToolsSnapshotJson,
+  getFiberTreeSnapshot,
   injectBevyReactDevTools,
 } from "./devtools";
 export type {
   DevToolsNodeSnapshot,
   DevToolsRootSnapshot,
   DevToolsSnapshot,
+  FiberNodeSnapshot,
+  FiberRootSnapshot,
+  FiberTreeSnapshot,
+  RdtBridgeEnvelope,
 } from "./devtools";
 
 export {

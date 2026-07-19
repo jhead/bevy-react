@@ -4,10 +4,14 @@
 //!
 //! Starts a JSON WebSocket server on `127.0.0.1:8098` that publishes:
 //! - `ecs_map` — `ReactContext.nodes` (`node_id` ↔ Bevy `Entity`)
-//! - `tree` — component tree snapshots pushed from JS (`__bevyReactDevTools`)
+//! - `tree` — host instance tree from JS (`__bevyReactDevTools.dump()`)
+//! - `fiber_tree` — reconciler fiber walk from JS
+//! - RDT-shaped `{ event, payload }` envelopes (`operations`, `rendererAttached`, …)
 //!
-//! This is a **debug bridge**, not the full React DevTools backend protocol.
-//! Connect with any WS client, or let the TS package auto-connect.
+//! This is a **debug bridge** with React DevTools–inspired message *shapes*.
+//! It is **not** a drop-in for `npx react-devtools` / the Chrome extension
+//! (those need `react-devtools-core` + Int32 `operations` on `:8097`). See
+//! `docs/DEVTOOLS.md`.
 //!
 //! ## `egui` feature
 //!
@@ -36,6 +40,8 @@ mod ws {
     struct SharedSnapshot {
         ecs_map: Arc<Mutex<Value>>,
         tree: Arc<Mutex<Value>>,
+        fiber_tree: Arc<Mutex<Value>>,
+        operations: Arc<Mutex<Value>>,
     }
 
     impl SharedSnapshot {
@@ -48,6 +54,14 @@ mod ws {
                 tree: Arc::new(Mutex::new(json!({
                     "type": "tree",
                     "roots": []
+                }))),
+                fiber_tree: Arc::new(Mutex::new(json!({
+                    "type": "fiber_tree",
+                    "roots": []
+                }))),
+                operations: Arc::new(Mutex::new(json!({
+                    "event": "operations",
+                    "payload": { "roots": [] }
                 }))),
             }
         }
@@ -144,31 +158,28 @@ mod ws {
 
         let hello = json!({
             "type": "hello",
-            "version": 1,
+            "version": 2,
             "renderer": "bevy-react",
             "port": DEVTOOLS_WS_PORT,
-            "protocol": "bevy-react-devtools-v1",
-            "note": "Custom debug bridge (not full React DevTools protocol). See docs/DEVTOOLS.md."
+            "protocol": "bevy-react-devtools-v2",
+            "supports": ["ecs_map", "tree", "fiber_tree", "rdt_event_envelopes"],
+            "note": "RDT-shaped events + fiber JSON on :8098 — not full react-devtools-core / :8097. See docs/DEVTOOLS.md."
         });
         write
             .send(Message::Text(hello.to_string().into()))
             .await?;
 
-        let ecs_text = snapshot
-            .ecs_map
-            .lock()
-            .ok()
-            .map(|guard| guard.to_string());
-        if let Some(text) = ecs_text {
-            write.send(Message::Text(text.into())).await?;
-        }
-        let tree_text = snapshot
-            .tree
-            .lock()
-            .ok()
-            .map(|guard| guard.to_string());
-        if let Some(text) = tree_text {
-            write.send(Message::Text(text.into())).await?;
+        for key in ["ecs_map", "tree", "fiber_tree", "operations"] {
+            let text = match key {
+                "ecs_map" => snapshot.ecs_map.lock().ok().map(|g| g.to_string()),
+                "tree" => snapshot.tree.lock().ok().map(|g| g.to_string()),
+                "fiber_tree" => snapshot.fiber_tree.lock().ok().map(|g| g.to_string()),
+                "operations" => snapshot.operations.lock().ok().map(|g| g.to_string()),
+                _ => None,
+            };
+            if let Some(text) = text {
+                write.send(Message::Text(text.into())).await?;
+            }
         }
 
         loop {
@@ -209,19 +220,40 @@ mod ws {
             return;
         };
         let typ = value.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        match typ {
-            "tree" => {
+        let event = value.get("event").and_then(|t| t.as_str()).unwrap_or("");
+        match (typ, event) {
+            ("tree", _) => {
                 if let Ok(mut tree) = snapshot.tree.lock() {
                     *tree = value.clone();
                 }
                 let _ = tx.send(value.to_string());
             }
-            "request_dump" | "ping" => {
-                if let Ok(ecs) = snapshot.ecs_map.lock() {
-                    let _ = tx.send(ecs.to_string());
+            ("fiber_tree", _) => {
+                if let Ok(mut fiber) = snapshot.fiber_tree.lock() {
+                    *fiber = value.clone();
                 }
-                if let Ok(tree) = snapshot.tree.lock() {
-                    let _ = tx.send(tree.to_string());
+                let _ = tx.send(value.to_string());
+            }
+            (_, "operations") => {
+                if let Ok(mut ops) = snapshot.operations.lock() {
+                    *ops = value.clone();
+                }
+                let _ = tx.send(value.to_string());
+            }
+            (_, "backendVersion" | "bridgeProtocol" | "rendererAttached") => {
+                // Handshake / meta — broadcast to other clients, do not cache as tree.
+                let _ = tx.send(value.to_string());
+            }
+            ("request_dump" | "ping", _) | (_, "request_dump" | "ping") => {
+                for slot in [
+                    &snapshot.ecs_map,
+                    &snapshot.tree,
+                    &snapshot.fiber_tree,
+                    &snapshot.operations,
+                ] {
+                    if let Ok(guard) = slot.lock() {
+                        let _ = tx.send(guard.to_string());
+                    }
                 }
             }
             _ => {}
@@ -299,8 +331,13 @@ mod ws {
             r#"
             (function () {
               try {
-                if (globalThis.__bevyReactDevTools && typeof globalThis.__bevyReactDevTools.dump === 'function') {
-                  globalThis.__bevyReactDevToolsLastDump = globalThis.__bevyReactDevTools.dump();
+                var api = globalThis.__bevyReactDevTools;
+                if (!api) return;
+                if (typeof api.dump === 'function') {
+                  globalThis.__bevyReactDevToolsLastDump = api.dump();
+                }
+                if (typeof api.dumpFibers === 'function') {
+                  globalThis.__bevyReactDevToolsLastFibers = api.dumpFibers();
                 }
               } catch (e) {
                 console.warn('[bevy-react] DevTools JS dump failed', e);

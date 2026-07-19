@@ -1,8 +1,8 @@
 # DevTools
 
 bevy-react ships a **debug direction** (not a visual designer): register the
-custom reconciler with React’s DevTools hook, dump the host component tree,
-and inspect `node_id` ↔ Bevy `Entity` mapping.
+custom reconciler with React’s DevTools hook, dump host + fiber trees, and
+inspect `node_id` ↔ Bevy `Entity` mapping.
 
 ## Feature flags (`plugin/Cargo.toml`)
 
@@ -45,20 +45,37 @@ ws.onopen = () => ws.send(JSON.stringify({ type: 'request_dump' }));
 
 ### Message types
 
+#### Legacy (`type` field)
+
 | `type` | Source | Payload |
 |---|---|---|
-| `hello` | Rust | Protocol banner |
+| `hello` | Rust | Protocol banner (`bevy-react-devtools-v2`) |
 | `ecs_map` | Rust | Per-root `nodeId` → Entity rows from `ReactContext.nodes` |
 | `tree` | JS | Host instance tree from `__bevyReactDevTools.dump()` |
-| `request_dump` / `ping` | Client → server | Re-broadcast latest `ecs_map` + `tree` |
+| `fiber_tree` | JS | Reconciler fiber walk from `__bevyReactDevTools.dumpFibers()` |
+| `request_dump` / `ping` | Client → server | Re-broadcast latest snapshots |
+
+#### RDT-shaped (`event` + `payload`)
+
+These mirror React DevTools bridge **envelope** shapes so tooling can share
+parsers. Payloads are JSON (not the Int32 `operations` codec).
+
+| `event` | Meaning |
+|---|---|
+| `backendVersion` | `bevy-react@0.1.0` |
+| `bridgeProtocol` | Advertised protocol + honesty note |
+| `rendererAttached` | Renderer metadata (`rendererPackageName: bevy-react`) |
+| `operations` | **JSON fiber snapshot** (`kind: "bevy-fiber-snapshot"`), not binary ops |
+| `request_dump` / `ping` | Same as legacy dump request |
 
 The TS package auto-connects to `:8098` when `WebSocket` is available (Boa
-shim) and pushes `tree` snapshots about every 2s.
+shim) and pushes snapshots about every 2s.
 
 In the JS console / Boa REPL:
 
 ```js
 __bevyReactDevTools.dump()
+__bevyReactDevTools.dumpFibers()
 ```
 
 ## `injectIntoDevTools`
@@ -67,15 +84,32 @@ __bevyReactDevTools.dump()
 `reconciler.injectIntoDevTools` so a `__REACT_DEVTOOLS_GLOBAL_HOOK__` (if
 present) can see the bevy-react renderer.
 
-## Standalone React DevTools (`npx react-devtools`)
+## Standalone React DevTools (`npx react-devtools`) — remaining gap
 
-Official standalone DevTools listens on **port 8097** and speaks the full
-backend protocol via [`react-devtools-core`](https://www.npmjs.com/package/react-devtools-core)
-(`connectToDevTools`). That stack is heavier than Boa’s environment reliably
-supports today, so this MVP uses the custom `:8098` bridge instead.
+Official standalone DevTools listens on **port 8097** and expects
+[`react-devtools-core`](https://www.npmjs.com/package/react-devtools-core)
+(`initialize` **before** React imports, then `connectToDevTools`) speaking the
+full backend protocol (Int32 `operations`, `inspectElement`, profiling, …).
 
-Future work: optional `react-devtools-core` + our WebSocket shim targeting
-`:8097` when feasible.
+**Why Boa blocks a faithful hookup today**
+
+1. **Init order** — `initialize()` must run before `react` / `react-reconciler`
+   load. Vite app bundles already include React; injecting the hook late is a
+   no-op for renderer registration timing.
+2. **Protocol fidelity** — standalone UI expects binary `operations` patches,
+   not a full-tree JSON dump. Emitting correct ops requires the official
+   backend agent, not a hand-rolled serializer.
+3. **Environment** — `react-devtools-core` assumes browser/RN surfaces (storage
+   APIs, richer WebSocket edge cases, etc.) beyond our Boa shims.
+
+**What we ship instead:** the `:8098` bridge with RDT-shaped `{ event, payload }`
+messages and a walked fiber tree. Useful for custom inspectors and for evolving
+toward full RDT; **not** a drop-in for the Electron DevTools UI or Chrome
+extension.
+
+Future: optional pre-bundle hook script + `react-devtools-core` against the
+WebSocket shim targeting `:8097` if/when Boa + bundling can guarantee early
+`initialize`.
 
 ## Entity mapping inspector
 

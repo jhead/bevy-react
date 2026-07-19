@@ -14,6 +14,8 @@ export interface BevyStyle {
   minHeight?: string | number;
   maxWidth?: string | number;
   maxHeight?: string | number;
+  /** Width / height ratio (`1.5` or `"16/9"`). */
+  aspectRatio?: string | number;
 
   // Position
   position?: "relative" | "absolute";
@@ -48,7 +50,20 @@ export interface BevyStyle {
   justifyItems?: "start" | "end" | "center" | "baseline" | "stretch";
   justifySelf?: "auto" | "start" | "end" | "center" | "baseline" | "stretch";
 
-  // Spacing
+  // CSS Grid
+  gridTemplateColumns?: string;
+  gridTemplateRows?: string;
+  gridAutoColumns?: string;
+  gridAutoRows?: string;
+  gridAutoFlow?: "row" | "column" | "row dense" | "column dense" | string;
+  gridColumn?: string;
+  gridRow?: string;
+  gridColumnStart?: string | number;
+  gridColumnEnd?: string | number;
+  gridRowStart?: string | number;
+  gridRowEnd?: string | number;
+
+  // Spacing (shorthands accept 1–4 CSS values, e.g. `"8px 16px"`)
   gap?: string | number;
   rowGap?: string | number;
   columnGap?: string | number;
@@ -68,16 +83,53 @@ export interface BevyStyle {
   borderWidth?: string | number;
   /** @deprecated Prefer `borderWidth` — kept as alias for Rust `border`. */
   border?: string | number;
+  borderTop?: string | number;
+  borderRight?: string | number;
+  borderBottom?: string | number;
+  borderLeft?: string | number;
   borderColor?: string;
+  borderTopColor?: string;
+  borderRightColor?: string;
+  borderBottomColor?: string;
+  borderLeftColor?: string;
+  /** 1–4 value shorthand (`"8px 16px"`). */
   borderRadius?: string | number;
+  borderTopLeftRadius?: string | number;
+  borderTopRightRadius?: string | number;
+  borderBottomRightRadius?: string | number;
+  borderBottomLeftRadius?: string | number;
 
   // Visual
   backgroundColor?: string;
+  /** CSS `linear-gradient(...)` → Bevy `BackgroundGradient` (helper; render wiring may lag). */
+  backgroundImage?: string;
+  backgroundGradient?: string;
+  boxShadow?: string;
+  /** 0–1 or percentage string. Bevy has no UiOpacity; multiply into colors in render. */
+  opacity?: string | number;
   zIndex?: number;
 
-  // Display
-  display?: "flex" | "none";
-  overflow?: "visible" | "clip" | "scroll";
+  // Display / overflow
+  display?: "flex" | "none" | "grid" | "block";
+  overflow?: "visible" | "clip" | "hidden" | "scroll";
+  overflowX?: "visible" | "clip" | "hidden" | "scroll";
+  overflowY?: "visible" | "clip" | "hidden" | "scroll";
+  /** `content-box` | `padding-box` | `border-box` | length | `"content-box 4px"`. */
+  overflowClipMargin?: string;
+
+  // Text (also used on Text style)
+  color?: string;
+  fontSize?: string | number;
+  /** Font asset path (e.g. `"fonts/FiraSans.ttf"`). Generic families ignored. */
+  fontFamily?: string;
+  textAlign?: "left" | "right" | "center" | "justify" | "start" | "end";
+  /** Unitless multiplier or `"24px"`. */
+  lineHeight?: string | number;
+
+  // Image
+  objectFit?: "fill" | "contain" | "cover" | "none" | "scale-down" | "stretch" | "auto";
+  tint?: string;
+  tintColor?: string;
 }
 
 /**
@@ -99,18 +151,6 @@ export interface PointerEventData {
 }
 
 /**
- * Props for the <button> element (ButtonBundle with interaction)
- */
-export interface ButtonProps extends NodeProps {
-  onClick?: (event?: PointerEventData) => void;
-  onPress?: (event?: PointerEventData) => void;
-  onRelease?: (event?: PointerEventData) => void;
-  onHover?: (event?: PointerEventData) => void;
-  onMouseEnter?: (event?: PointerEventData) => void;
-  onMouseLeave?: (event?: PointerEventData) => void;
-}
-
-/**
  * Keyboard event data (DOM-like logical key + modifiers from the host)
  */
 export interface KeyboardEventData {
@@ -124,13 +164,65 @@ export interface KeyboardEventData {
 }
 
 /**
+ * Mouse-wheel payload from the host (`wheel` events).
+ * `deltaMode`: 0 = pixel, 1 = line (DOM `WheelEvent.DOM_DELTA_*`).
+ */
+export interface WheelEventData {
+  deltaX?: number;
+  deltaY?: number;
+  deltaMode?: number;
+}
+
+/**
+ * Scroll position payload after the host applies a wheel delta (`scroll` events).
+ */
+export interface ScrollEventData {
+  scrollLeft?: number;
+  scrollTop?: number;
+  deltaX?: number;
+  deltaY?: number;
+}
+
+/**
+ * Synthetic extras attached by the reconciler for bubbling / `stopPropagation`.
+ * Payload fields are spread onto the same object so handlers can read `event.key` / `event.x`.
+ */
+export interface SyntheticEventExtras {
+  type: string;
+  target: number;
+  currentTarget: number;
+  stopPropagation: () => void;
+}
+
+export type PointerSyntheticEvent = PointerEventData & SyntheticEventExtras;
+export type KeyboardSyntheticEvent = KeyboardEventData & SyntheticEventExtras;
+export type WheelSyntheticEvent = WheelEventData & SyntheticEventExtras;
+export type ScrollSyntheticEvent = ScrollEventData & SyntheticEventExtras;
+
+/**
+ * Props for the <button> element (ButtonBundle with interaction)
+ */
+export interface ButtonProps extends NodeProps {
+  onClick?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onPress?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onRelease?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onHover?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onMouseEnter?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onMouseLeave?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onWheel?: (event?: WheelSyntheticEvent | WheelEventData) => void;
+  onScroll?: (event?: ScrollSyntheticEvent | ScrollEventData) => void;
+}
+
+/**
  * Props for the internal <bevy-text-input> element (focusable container)
  */
 export interface TextInputInternalProps extends NodeProps {
   onFocus?: () => void;
   onBlur?: () => void;
-  onKeyDown?: (event: KeyboardEventData) => void;
-  onKeyUp?: (event: KeyboardEventData) => void;
+  onKeyDown?: (event: KeyboardSyntheticEvent | KeyboardEventData) => void;
+  onKeyUp?: (event: KeyboardSyntheticEvent | KeyboardEventData) => void;
+  onWheel?: (event?: WheelSyntheticEvent | WheelEventData) => void;
+  onScroll?: (event?: ScrollSyntheticEvent | ScrollEventData) => void;
 }
 
 /**
@@ -138,12 +230,7 @@ export interface TextInputInternalProps extends NodeProps {
  */
 export interface TextProps {
   children?: ReactNode;
-  style?: BevyStyle & {
-    fontSize?: number;
-    color?: string;
-    /** Not yet supported by bevy-react */
-    fontFamily?: string;
-  };
+  style?: BevyStyle;
 }
 
 /**
@@ -162,6 +249,8 @@ export interface BevyInstance {
   type: string;
   props: Record<string, unknown>;
   children: BevyInstance[];
+  /** Parent node id for event bubbling; unset for container children. */
+  parentId?: number;
 }
 
 /**

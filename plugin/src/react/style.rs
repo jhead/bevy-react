@@ -1,20 +1,19 @@
 use bevy::prelude::*;
+use bevy::text::{Justify, LineHeight};
+use bevy::ui::widget::NodeImageMode;
 use bevy::ui::{
-    AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
-    JustifyItems, JustifySelf, Overflow, OverflowAxis, PositionType, Val,
+    AlignContent, AlignItems, AlignSelf, BackgroundGradient, BorderColor, BorderRadius, BoxShadow,
+    ColorStop, Display, FlexDirection, FlexWrap, Gradient, GridAutoFlow, GridPlacement, GridTrack,
+    JustifyContent, JustifyItems, JustifySelf, LinearGradient, Overflow, OverflowAxis,
+    OverflowClipMargin, PositionType, RepeatedGridTrack, ShadowStyle, Val,
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
-/// A value that can be either a string or a number (for CSS-like properties)
-#[derive(Debug, Clone)]
+/// A value that can be either a string or a number (for CSS-like length properties).
+/// Numbers are treated as pixel values (`"Npx"`).
+#[derive(Debug, Clone, Default)]
 pub struct CssValue(pub String);
-
-impl Default for CssValue {
-    fn default() -> Self {
-        CssValue(String::new())
-    }
-}
 
 impl<'de> Deserialize<'de> for CssValue {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -25,7 +24,6 @@ impl<'de> Deserialize<'de> for CssValue {
         match value {
             Value::String(s) => Ok(CssValue(s)),
             Value::Number(n) => {
-                // Treat numbers as pixel values
                 if let Some(i) = n.as_i64() {
                     Ok(CssValue(format!("{}px", i)))
                 } else if let Some(f) = n.as_f64() {
@@ -35,6 +33,27 @@ impl<'de> Deserialize<'de> for CssValue {
                 }
             }
             _ => Ok(CssValue(String::new())),
+        }
+    }
+}
+
+/// A CSS scalar where bare numbers keep their numeric form (no implied `px`).
+/// Used for `aspectRatio`, `lineHeight`, `opacity`, etc.
+#[derive(Debug, Clone)]
+#[derive(Default)]
+pub struct CssScalar(pub String);
+
+
+impl<'de> Deserialize<'de> for CssScalar {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        match value {
+            Value::String(s) => Ok(CssScalar(s)),
+            Value::Number(n) => Ok(CssScalar(n.to_string())),
+            _ => Ok(CssScalar(String::new())),
         }
     }
 }
@@ -64,6 +83,7 @@ pub struct StyleProps {
     pub min_height: Option<CssValue>,
     pub max_width: Option<CssValue>,
     pub max_height: Option<CssValue>,
+    pub aspect_ratio: Option<CssScalar>,
 
     // Flexbox
     pub flex_direction: Option<String>,
@@ -77,6 +97,19 @@ pub struct StyleProps {
     pub justify_content: Option<String>,
     pub justify_items: Option<String>,
     pub justify_self: Option<String>,
+
+    // CSS Grid
+    pub grid_template_columns: Option<String>,
+    pub grid_template_rows: Option<String>,
+    pub grid_auto_columns: Option<String>,
+    pub grid_auto_rows: Option<String>,
+    pub grid_auto_flow: Option<String>,
+    pub grid_column: Option<String>,
+    pub grid_row: Option<String>,
+    pub grid_column_start: Option<CssScalar>,
+    pub grid_column_end: Option<CssScalar>,
+    pub grid_row_start: Option<CssScalar>,
+    pub grid_row_end: Option<CssScalar>,
 
     // Spacing
     pub margin: Option<CssValue>,
@@ -105,26 +138,52 @@ pub struct StyleProps {
     pub border_bottom: Option<CssValue>,
     pub border_left: Option<CssValue>,
     pub border_radius: Option<CssValue>,
+    pub border_top_left_radius: Option<CssValue>,
+    pub border_top_right_radius: Option<CssValue>,
+    pub border_bottom_right_radius: Option<CssValue>,
+    pub border_bottom_left_radius: Option<CssValue>,
 
     // Gap
     pub gap: Option<CssValue>,
     pub row_gap: Option<CssValue>,
     pub column_gap: Option<CssValue>,
 
-    // Display
+    // Display / overflow
     pub display: Option<String>,
     pub overflow: Option<String>,
+    pub overflow_x: Option<String>,
+    pub overflow_y: Option<String>,
+    pub overflow_clip_margin: Option<String>,
 
     // Z-Index
     pub z_index: Option<i32>,
 
-    // Colors (for BackgroundColor, BorderColor)
+    // Colors
     pub background_color: Option<String>,
     pub border_color: Option<String>,
+    pub border_top_color: Option<String>,
+    pub border_right_color: Option<String>,
+    pub border_bottom_color: Option<String>,
+    pub border_left_color: Option<String>,
+
+    // Visual effects
+    pub opacity: Option<CssScalar>,
+    pub box_shadow: Option<String>,
+    pub background_image: Option<String>,
+    /// Alias for CSS `background-image` linear-gradient / Bevy `BackgroundGradient`
+    pub background_gradient: Option<String>,
 
     // Text styling
     pub color: Option<String>,
     pub font_size: Option<CssValue>,
+    pub font_family: Option<String>,
+    pub text_align: Option<String>,
+    pub line_height: Option<CssScalar>,
+
+    // Image
+    pub object_fit: Option<String>,
+    pub tint: Option<String>,
+    pub tint_color: Option<String>,
 }
 
 /// Parse props JSON into NodeProps
@@ -144,29 +203,25 @@ pub fn parse_val(value: &str) -> Val {
         return Val::Auto;
     }
 
-    if let Some(px) = value.strip_suffix("px") {
-        if let Ok(n) = px.trim().parse::<f32>() {
+    if let Some(px) = value.strip_suffix("px")
+        && let Ok(n) = px.trim().parse::<f32>() {
             return Val::Px(n);
         }
-    }
 
-    if let Some(pct) = value.strip_suffix("%") {
-        if let Ok(n) = pct.trim().parse::<f32>() {
+    if let Some(pct) = value.strip_suffix("%")
+        && let Ok(n) = pct.trim().parse::<f32>() {
             return Val::Percent(n);
         }
-    }
 
-    if let Some(vw) = value.strip_suffix("vw") {
-        if let Ok(n) = vw.trim().parse::<f32>() {
+    if let Some(vw) = value.strip_suffix("vw")
+        && let Ok(n) = vw.trim().parse::<f32>() {
             return Val::Vw(n);
         }
-    }
 
-    if let Some(vh) = value.strip_suffix("vh") {
-        if let Ok(n) = vh.trim().parse::<f32>() {
+    if let Some(vh) = value.strip_suffix("vh")
+        && let Ok(n) = vh.trim().parse::<f32>() {
             return Val::Vh(n);
         }
-    }
 
     // Try parsing as plain number (treat as px)
     if let Ok(n) = value.parse::<f32>() {
@@ -177,7 +232,364 @@ pub fn parse_val(value: &str) -> Val {
     Val::Auto
 }
 
-/// Parse flex direction
+/// Parse CSS margin/padding shorthand into a UiRect (1–4 values).
+pub fn parse_ui_rect_shorthand(value: &str) -> UiRect {
+    let parts: Vec<&str> = value.split_whitespace().collect();
+    match parts.as_slice() {
+        [all] => UiRect::all(parse_val(all)),
+        [vertical, horizontal] => UiRect {
+            top: parse_val(vertical),
+            bottom: parse_val(vertical),
+            left: parse_val(horizontal),
+            right: parse_val(horizontal),
+        },
+        [top, horizontal, bottom] => UiRect {
+            top: parse_val(top),
+            right: parse_val(horizontal),
+            bottom: parse_val(bottom),
+            left: parse_val(horizontal),
+        },
+        [top, right, bottom, left] => UiRect {
+            top: parse_val(top),
+            right: parse_val(right),
+            bottom: parse_val(bottom),
+            left: parse_val(left),
+        },
+        _ => {
+            log::warn!(
+                "Invalid UiRect shorthand '{}', using first token for all sides",
+                value
+            );
+            let first = parts.first().copied().unwrap_or("0");
+            UiRect::all(parse_val(first))
+        }
+    }
+}
+
+/// Parse CSS border-radius shorthand into a BorderRadius (1–4 values).
+pub fn parse_border_radius_shorthand(value: &str) -> BorderRadius {
+    let parts: Vec<&str> = value.split_whitespace().collect();
+    match parts.as_slice() {
+        [all] => BorderRadius::all(parse_val(all)),
+        [tl_br, tr_bl] => BorderRadius::new(
+            parse_val(tl_br),
+            parse_val(tr_bl),
+            parse_val(tl_br),
+            parse_val(tr_bl),
+        ),
+        [tl, tr_bl, br] => BorderRadius::new(
+            parse_val(tl),
+            parse_val(tr_bl),
+            parse_val(br),
+            parse_val(tr_bl),
+        ),
+        [tl, tr, br, bl] => BorderRadius::new(
+            parse_val(tl),
+            parse_val(tr),
+            parse_val(br),
+            parse_val(bl),
+        ),
+        _ => {
+            log::warn!(
+                "Invalid border-radius shorthand '{}', using first token",
+                value
+            );
+            let first = parts.first().copied().unwrap_or("0");
+            BorderRadius::all(parse_val(first))
+        }
+    }
+}
+
+/// Build BorderRadius from style props (shorthand + per-corner overrides).
+pub fn style_to_border_radius(props: &StyleProps) -> Option<BorderRadius> {
+    let has_any = props.border_radius.is_some()
+        || props.border_top_left_radius.is_some()
+        || props.border_top_right_radius.is_some()
+        || props.border_bottom_right_radius.is_some()
+        || props.border_bottom_left_radius.is_some();
+    if !has_any {
+        return None;
+    }
+
+    let mut radius = props
+        .border_radius
+        .as_ref()
+        .map(|v| parse_border_radius_shorthand(&v.0))
+        .unwrap_or(BorderRadius::ZERO);
+
+    if let Some(ref v) = props.border_top_left_radius {
+        radius.top_left = parse_val(&v.0);
+    }
+    if let Some(ref v) = props.border_top_right_radius {
+        radius.top_right = parse_val(&v.0);
+    }
+    if let Some(ref v) = props.border_bottom_right_radius {
+        radius.bottom_right = parse_val(&v.0);
+    }
+    if let Some(ref v) = props.border_bottom_left_radius {
+        radius.bottom_left = parse_val(&v.0);
+    }
+    Some(radius)
+}
+
+/// Build per-side BorderColor from style props.
+pub fn style_to_border_color(props: &StyleProps) -> Option<BorderColor> {
+    let has_any = props.border_color.is_some()
+        || props.border_top_color.is_some()
+        || props.border_right_color.is_some()
+        || props.border_bottom_color.is_some()
+        || props.border_left_color.is_some();
+    if !has_any {
+        return None;
+    }
+
+    let mut color = BorderColor::DEFAULT;
+    if let Some(ref c) = props.border_color
+        && let Some(parsed) = parse_color(c) {
+            color = BorderColor::all(parsed);
+        }
+    if let Some(ref c) = props.border_top_color
+        && let Some(parsed) = parse_color(c) {
+            color.top = parsed;
+        }
+    if let Some(ref c) = props.border_right_color
+        && let Some(parsed) = parse_color(c) {
+            color.right = parsed;
+        }
+    if let Some(ref c) = props.border_bottom_color
+        && let Some(parsed) = parse_color(c) {
+            color.bottom = parsed;
+        }
+    if let Some(ref c) = props.border_left_color
+        && let Some(parsed) = parse_color(c) {
+            color.left = parsed;
+        }
+    Some(color)
+}
+
+/// Parse opacity (0–1, or percentage string).
+pub fn parse_opacity(value: &str) -> Option<f32> {
+    let value = value.trim();
+    if let Some(pct) = value.strip_suffix('%') {
+        return pct.trim().parse::<f32>().ok().map(|n| (n / 100.0).clamp(0.0, 1.0));
+    }
+    value.parse::<f32>().ok().map(|n| n.clamp(0.0, 1.0))
+}
+
+pub fn style_opacity(props: &StyleProps) -> Option<f32> {
+    props.opacity.as_ref().and_then(|v| parse_opacity(&v.0))
+}
+
+/// Parse CSS `box-shadow` into Bevy BoxShadow.
+/// Supports: `offset-x offset-y [blur] [spread] [color]` (comma-separated layers).
+pub fn parse_box_shadow(value: &str) -> Option<BoxShadow> {
+    let layers: Vec<ShadowStyle> = split_css_list(value)
+        .into_iter()
+        .filter_map(|layer| parse_box_shadow_layer(layer.trim()))
+        .collect();
+    if layers.is_empty() {
+        None
+    } else {
+        Some(BoxShadow(layers))
+    }
+}
+
+fn parse_box_shadow_layer(layer: &str) -> Option<ShadowStyle> {
+    if layer.is_empty() || layer == "none" {
+        return None;
+    }
+
+    let tokens: Vec<&str> = layer.split_whitespace().collect();
+    let mut lengths: Vec<Val> = Vec::new();
+    let mut color = Color::srgba(0.0, 0.0, 0.0, 0.5);
+
+    for token in tokens {
+        let lower = token.to_lowercase();
+        if lower.starts_with('#')
+            || lower.starts_with("rgb")
+            || lower.starts_with("hsl")
+            || named_color(&lower).is_some()
+        {
+            if let Some(c) = parse_color(token) {
+                color = c;
+            }
+        } else {
+            lengths.push(parse_val(token));
+        }
+    }
+
+    if lengths.is_empty() {
+        return None;
+    }
+
+    Some(ShadowStyle {
+        color,
+        x_offset: lengths.first().copied().unwrap_or(Val::Px(0.0)),
+        y_offset: lengths.get(1).copied().unwrap_or(Val::Px(0.0)),
+        blur_radius: lengths.get(2).copied().unwrap_or(Val::Px(0.0)),
+        spread_radius: lengths.get(3).copied().unwrap_or(Val::Px(0.0)),
+    })
+}
+
+pub fn style_to_box_shadow(props: &StyleProps) -> Option<BoxShadow> {
+    props.box_shadow.as_deref().and_then(parse_box_shadow)
+}
+
+/// Parse a CSS `linear-gradient(...)` into Bevy BackgroundGradient.
+pub fn parse_background_gradient(value: &str) -> Option<BackgroundGradient> {
+    let value = value.trim();
+    let lower = value.to_lowercase();
+    if !lower.starts_with("linear-gradient(") {
+        return None;
+    }
+    let inner = value
+        .trim_start_matches(|c: char| c != '(')
+        .trim_start_matches('(')
+        .trim_end_matches(')')
+        .trim();
+
+    // Split on commas not inside parentheses
+    let parts = split_css_list(inner);
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut angle = LinearGradient::TO_BOTTOM;
+    let mut stop_start = 0;
+
+    let first = parts[0].trim().to_lowercase();
+    if first.starts_with("to ") {
+        angle = match first.as_str() {
+            "to top" => LinearGradient::TO_TOP,
+            "to top right" | "to right top" => LinearGradient::TO_TOP_RIGHT,
+            "to right" => LinearGradient::TO_RIGHT,
+            "to bottom right" | "to right bottom" => LinearGradient::TO_BOTTOM_RIGHT,
+            "to bottom" => LinearGradient::TO_BOTTOM,
+            "to bottom left" | "to left bottom" => LinearGradient::TO_BOTTOM_LEFT,
+            "to left" => LinearGradient::TO_LEFT,
+            "to top left" | "to left top" => LinearGradient::TO_TOP_LEFT,
+            _ => LinearGradient::TO_BOTTOM,
+        };
+        stop_start = 1;
+    } else if let Some(deg) = first.strip_suffix("deg")
+        && let Ok(degrees) = deg.trim().parse::<f32>() {
+            // CSS: 0deg = to top; Bevy: 0 = to top, increasing clockwise — same convention
+            angle = degrees.to_radians();
+            stop_start = 1;
+        }
+
+    let mut stops = Vec::new();
+    for part in &parts[stop_start..] {
+        let tokens: Vec<&str> = part.split_whitespace().collect();
+        if tokens.is_empty() {
+            continue;
+        }
+        let color = parse_color(tokens[0])?;
+        let point = if tokens.len() >= 2 {
+            parse_val(tokens[1])
+        } else {
+            Val::Auto
+        };
+        stops.push(ColorStop::new(color, point));
+    }
+
+    if stops.len() < 2 {
+        return None;
+    }
+
+    Some(BackgroundGradient(vec![Gradient::Linear(LinearGradient::new(
+        angle, stops,
+    ))]))
+}
+
+pub fn style_to_background_gradient(props: &StyleProps) -> Option<BackgroundGradient> {
+    props
+        .background_gradient
+        .as_deref()
+        .or(props.background_image.as_deref())
+        .and_then(parse_background_gradient)
+}
+
+/// Parse CSS text-align into Bevy Justify (JustifyText).
+pub fn parse_text_align(value: &str) -> Option<Justify> {
+    match value.trim().to_lowercase().as_str() {
+        "left" | "start" => Some(Justify::Left),
+        "right" | "end" => Some(Justify::Right),
+        "center" => Some(Justify::Center),
+        "justify" => Some(Justify::Justified),
+        _ => None,
+    }
+}
+
+/// Parse line-height: unitless → RelativeToFont, px/% → Px / RelativeToFont.
+pub fn parse_line_height(value: &str) -> Option<LineHeight> {
+    let value = value.trim();
+    if let Some(px) = value.strip_suffix("px") {
+        return px.trim().parse::<f32>().ok().map(LineHeight::Px);
+    }
+    if let Some(pct) = value.strip_suffix('%') {
+        return pct
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|n| LineHeight::RelativeToFont(n / 100.0));
+    }
+    value
+        .parse::<f32>()
+        .ok()
+        .map(LineHeight::RelativeToFont)
+}
+
+/// Asset path for fontFamily when it looks like a path; `None` for generic families.
+pub fn parse_font_family(value: &str) -> Option<String> {
+    let value = value.trim().trim_matches('"').trim_matches('\'');
+    if value.is_empty() {
+        return None;
+    }
+    let lower = value.to_lowercase();
+    match lower.as_str() {
+        "serif" | "sans-serif" | "monospace" | "cursive" | "fantasy" | "system-ui" | "inherit"
+        | "initial" | "unset" => None,
+        _ if value.contains('/') || value.contains('.') => Some(value.to_string()),
+        _ => Some(value.to_string()),
+    }
+}
+
+/// Map CSS object-fit to Bevy NodeImageMode.
+pub fn parse_object_fit(value: &str) -> NodeImageMode {
+    match value.trim().to_lowercase().as_str() {
+        "fill" | "stretch" => NodeImageMode::Stretch,
+        "none" | "contain" | "cover" | "scale-down" | "auto" => NodeImageMode::Auto,
+        _ => NodeImageMode::Auto,
+    }
+}
+
+pub fn style_object_fit(props: &StyleProps) -> Option<NodeImageMode> {
+    props.object_fit.as_deref().map(parse_object_fit)
+}
+
+pub fn style_tint(props: &StyleProps) -> Option<Color> {
+    props
+        .tint
+        .as_deref()
+        .or(props.tint_color.as_deref())
+        .and_then(parse_color)
+}
+
+/// Parse aspect-ratio: `1.5`, `16/9`, `16 / 9`.
+pub fn parse_aspect_ratio(value: &str) -> Option<f32> {
+    let value = value.trim();
+    if let Some((w, h)) = value.split_once('/') {
+        let w: f32 = w.trim().parse().ok()?;
+        let h: f32 = h.trim().parse().ok()?;
+        if h == 0.0 {
+            return None;
+        }
+        return Some(w / h);
+    }
+    value.parse().ok()
+}
+
 fn parse_flex_direction(value: &str) -> FlexDirection {
     match value.to_lowercase().as_str() {
         "row" => FlexDirection::Row,
@@ -188,7 +600,6 @@ fn parse_flex_direction(value: &str) -> FlexDirection {
     }
 }
 
-/// Parse align items
 fn parse_align_items(value: &str) -> AlignItems {
     match value.to_lowercase().as_str() {
         "start" | "flex-start" | "flexstart" => AlignItems::FlexStart,
@@ -200,7 +611,6 @@ fn parse_align_items(value: &str) -> AlignItems {
     }
 }
 
-/// Parse justify content
 fn parse_justify_content(value: &str) -> JustifyContent {
     match value.to_lowercase().as_str() {
         "start" | "flex-start" | "flexstart" => JustifyContent::FlexStart,
@@ -213,7 +623,6 @@ fn parse_justify_content(value: &str) -> JustifyContent {
     }
 }
 
-/// Parse position type
 fn parse_position_type(value: &str) -> PositionType {
     match value.to_lowercase().as_str() {
         "relative" => PositionType::Relative,
@@ -222,7 +631,6 @@ fn parse_position_type(value: &str) -> PositionType {
     }
 }
 
-/// Parse flex wrap
 fn parse_flex_wrap(value: &str) -> FlexWrap {
     match value.to_lowercase().as_str() {
         "nowrap" | "no-wrap" => FlexWrap::NoWrap,
@@ -232,7 +640,6 @@ fn parse_flex_wrap(value: &str) -> FlexWrap {
     }
 }
 
-/// Parse align self
 fn parse_align_self(value: &str) -> AlignSelf {
     match value.to_lowercase().as_str() {
         "auto" => AlignSelf::Auto,
@@ -245,7 +652,6 @@ fn parse_align_self(value: &str) -> AlignSelf {
     }
 }
 
-/// Parse align content
 fn parse_align_content(value: &str) -> AlignContent {
     match value.to_lowercase().as_str() {
         "start" | "flex-start" | "flexstart" => AlignContent::FlexStart,
@@ -259,7 +665,6 @@ fn parse_align_content(value: &str) -> AlignContent {
     }
 }
 
-/// Parse justify items
 fn parse_justify_items(value: &str) -> JustifyItems {
     match value.to_lowercase().as_str() {
         "start" | "flex-start" | "flexstart" => JustifyItems::Start,
@@ -271,7 +676,6 @@ fn parse_justify_items(value: &str) -> JustifyItems {
     }
 }
 
-/// Parse justify self
 fn parse_justify_self(value: &str) -> JustifySelf {
     match value.to_lowercase().as_str() {
         "auto" => JustifySelf::Auto,
@@ -284,7 +688,6 @@ fn parse_justify_self(value: &str) -> JustifySelf {
     }
 }
 
-/// Parse display
 fn parse_display(value: &str) -> Display {
     match value.to_lowercase().as_str() {
         "flex" => Display::Flex,
@@ -295,52 +698,369 @@ fn parse_display(value: &str) -> Display {
     }
 }
 
-/// Parse overflow
-fn parse_overflow(value: &str) -> Overflow {
-    let axis = match value.to_lowercase().as_str() {
+fn parse_overflow_axis(value: &str) -> OverflowAxis {
+    match value.to_lowercase().as_str() {
         "visible" => OverflowAxis::Visible,
         "clip" | "hidden" => OverflowAxis::Clip,
         "scroll" => OverflowAxis::Scroll,
         _ => OverflowAxis::Visible,
-    };
-    Overflow {
-        x: axis,
-        y: axis,
     }
 }
 
-/// Parse a CSS color string to Bevy Color
-/// Supports: "red", "blue", "#ff0000", "rgb(255, 0, 0)", "rgba(255, 0, 0, 1.0)"
+/// Parse overflow (applies to both axes)
+fn parse_overflow(value: &str) -> Overflow {
+    let axis = parse_overflow_axis(value);
+    Overflow { x: axis, y: axis }
+}
+
+fn parse_overflow_clip_margin(value: &str) -> OverflowClipMargin {
+    let parts: Vec<&str> = value.split_whitespace().collect();
+    let (box_token, margin_token) = match parts.as_slice() {
+        [b] => (*b, None),
+        [b, m] => (*b, Some(*m)),
+        _ => (value.trim(), None),
+    };
+
+    let mut clip = match box_token.to_lowercase().as_str() {
+        "content-box" | "contentbox" => OverflowClipMargin::content_box(),
+        "padding-box" | "paddingbox" => OverflowClipMargin::padding_box(),
+        "border-box" | "borderbox" => OverflowClipMargin::border_box(),
+        _ => {
+            // Bare length → padding-box with margin
+            if let Val::Px(px) = parse_val(box_token) {
+                return OverflowClipMargin::padding_box().with_margin(px);
+            }
+            OverflowClipMargin::DEFAULT
+        }
+    };
+
+    if let Some(m) = margin_token
+        && let Val::Px(px) = parse_val(m) {
+            clip = clip.with_margin(px);
+        }
+    clip
+}
+
+fn parse_grid_auto_flow(value: &str) -> GridAutoFlow {
+    match value.to_lowercase().as_str() {
+        "row" => GridAutoFlow::Row,
+        "column" | "col" => GridAutoFlow::Column,
+        "row dense" | "rowdense" | "dense" => GridAutoFlow::RowDense,
+        "column dense" | "columndense" => GridAutoFlow::ColumnDense,
+        _ => GridAutoFlow::default(),
+    }
+}
+
+/// Parse a single grid track sizing function into a RepeatedGridTrack (count 1).
+fn parse_grid_track(token: &str) -> Option<RepeatedGridTrack> {
+    let token = token.trim().to_lowercase();
+    if token.is_empty() {
+        return None;
+    }
+
+    if token == "auto" {
+        return Some(GridTrack::auto());
+    }
+    if token == "min-content" || token == "mincontent" {
+        return Some(GridTrack::min_content());
+    }
+    if token == "max-content" || token == "maxcontent" {
+        return Some(GridTrack::max_content());
+    }
+
+    if let Some(fr) = token.strip_suffix("fr")
+        && let Ok(n) = fr.trim().parse::<f32>() {
+            return Some(GridTrack::flex(n));
+        }
+
+    if let Some(px) = token.strip_suffix("px")
+        && let Ok(n) = px.trim().parse::<f32>() {
+            return Some(GridTrack::px(n));
+        }
+
+    if let Some(pct) = token.strip_suffix('%')
+        && let Ok(n) = pct.trim().parse::<f32>() {
+            return Some(GridTrack::percent(n));
+        }
+
+    if let Some(inner) = token
+        .strip_prefix("fit-content(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        if let Some(px) = inner.strip_suffix("px")
+            && let Ok(n) = px.trim().parse::<f32>() {
+                return Some(GridTrack::fit_content_px(n));
+            }
+        if let Some(pct) = inner.strip_suffix('%')
+            && let Ok(n) = pct.trim().parse::<f32>() {
+                return Some(GridTrack::fit_content_percent(n));
+            }
+    }
+
+    // Plain number → px
+    if let Ok(n) = token.parse::<f32>() {
+        return Some(GridTrack::px(n));
+    }
+
+    log::warn!("Unknown grid track '{}', defaulting to auto", token);
+    Some(GridTrack::auto())
+}
+
+/// Parse `grid-template-columns` / `grid-template-rows` track lists.
+/// Supports space-separated tracks and `repeat(N, track)`.
+pub fn parse_grid_template(value: &str) -> Vec<RepeatedGridTrack> {
+    let mut tracks = Vec::new();
+    let mut rest = value.trim();
+
+    while !rest.is_empty() {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+
+        if let Some(after_repeat) = rest.strip_prefix("repeat(")
+            && let Some(end) = find_closing_paren(after_repeat) {
+                let inner = &after_repeat[..end];
+                if let Some((count_str, track_str)) = inner.split_once(',') {
+                    let count_str = count_str.trim().to_lowercase();
+                    let track_str = track_str.trim();
+                    let repetition = match count_str.as_str() {
+                        "auto-fill" | "autofill" => {
+                            // Auto-fill/fit only support fixed tracks via RepeatedGridTrack helpers;
+                            // fall back to a single auto track when unsupported.
+                            if let Some(t) = parse_grid_track(track_str) {
+                                tracks.push(t);
+                            }
+                            rest = after_repeat[end + 1..].trim_start();
+                            continue;
+                        }
+                        "auto-fit" | "autofit" => {
+                            if let Some(t) = parse_grid_track(track_str) {
+                                tracks.push(t);
+                            }
+                            rest = after_repeat[end + 1..].trim_start();
+                            continue;
+                        }
+                        _ => count_str.parse::<u16>().unwrap_or(1),
+                    };
+
+                    if let Some(base) = parse_grid_track(track_str) {
+                        // Expand integer repeats into N identical tracks
+                        for _ in 0..repetition {
+                            tracks.push(base.clone());
+                        }
+                    }
+                }
+                rest = after_repeat[end + 1..].trim_start();
+                continue;
+            }
+
+        // Take next whitespace-delimited token (or minmax/fit-content call)
+        let (token, remaining) = next_css_token(rest);
+        if let Some(t) = parse_grid_track(token) {
+            tracks.push(t);
+        }
+        rest = remaining;
+    }
+
+    tracks
+}
+
+fn parse_grid_auto_tracks(value: &str) -> Vec<GridTrack> {
+    value
+        .split_whitespace()
+        .filter_map(|token| {
+            // parse_grid_track returns RepeatedGridTrack; extract via constructors again
+            let token = token.trim().to_lowercase();
+            if token == "auto" {
+                return Some(GridTrack::auto());
+            }
+            if token == "min-content" || token == "mincontent" {
+                return Some(GridTrack::min_content());
+            }
+            if token == "max-content" || token == "maxcontent" {
+                return Some(GridTrack::max_content());
+            }
+            if let Some(fr) = token.strip_suffix("fr")
+                && let Ok(n) = fr.trim().parse::<f32>() {
+                    return Some(GridTrack::flex(n));
+                }
+            if let Some(px) = token.strip_suffix("px")
+                && let Ok(n) = px.trim().parse::<f32>() {
+                    return Some(GridTrack::px(n));
+                }
+            if let Some(pct) = token.strip_suffix('%')
+                && let Ok(n) = pct.trim().parse::<f32>() {
+                    return Some(GridTrack::percent(n));
+                }
+            token.parse::<f32>().ok().map(GridTrack::px)
+        })
+        .collect()
+}
+
+/// Parse CSS grid-row / grid-column placement.
+pub fn parse_grid_placement(value: &str) -> GridPlacement {
+    let value = value.trim().to_lowercase();
+    if value == "auto" {
+        return GridPlacement::auto();
+    }
+
+    let parts: Vec<&str> = value.split('/').map(|s| s.trim()).collect();
+    match parts.as_slice() {
+        [start] => {
+            if let Some(span) = start.strip_prefix("span ")
+                && let Ok(n) = span.trim().parse::<u16>() {
+                    return GridPlacement::span(n.max(1));
+                }
+            if let Ok(n) = start.parse::<i16>()
+                && n != 0 {
+                    return GridPlacement::start(n);
+                }
+            GridPlacement::auto()
+        }
+        [start, end] => {
+            let start = start.trim();
+            let end = end.trim();
+            if let Some(span) = end.strip_prefix("span ") {
+                let span_n = span.trim().parse::<u16>().unwrap_or(1).max(1);
+                if let Ok(s) = start.parse::<i16>()
+                    && s != 0 {
+                        return GridPlacement::start_span(s, span_n);
+                    }
+                return GridPlacement::span(span_n);
+            }
+            if start == "span" || start.starts_with("span ") {
+                // unusual; treat as span only
+                if let Some(span) = start.strip_prefix("span ")
+                    && let Ok(n) = span.trim().parse::<u16>() {
+                        return GridPlacement::span(n.max(1));
+                    }
+            }
+            let s = start.parse::<i16>().ok();
+            let e = end.parse::<i16>().ok();
+            match (s, e) {
+                (Some(s), Some(e)) if s != 0 && e != 0 => GridPlacement::start_end(s, e),
+                (Some(s), _) if s != 0 => GridPlacement::start(s),
+                (_, Some(e)) if e != 0 => GridPlacement::end(e),
+                _ => GridPlacement::auto(),
+            }
+        }
+        _ => GridPlacement::auto(),
+    }
+}
+
+fn build_grid_placement(
+    shorthand: Option<&String>,
+    start: Option<&CssScalar>,
+    end: Option<&CssScalar>,
+) -> Option<GridPlacement> {
+    if let Some(s) = shorthand {
+        return Some(parse_grid_placement(s));
+    }
+    match (start, end) {
+        (Some(s), Some(e)) => {
+            let start_n = s.0.trim().parse::<i16>().ok()?;
+            let end_n = e.0.trim().parse::<i16>().ok()?;
+            if start_n == 0 || end_n == 0 {
+                return None;
+            }
+            Some(GridPlacement::start_end(start_n, end_n))
+        }
+        (Some(s), None) => {
+            let start_n = s.0.trim().parse::<i16>().ok()?;
+            if start_n == 0 {
+                return None;
+            }
+            Some(GridPlacement::start(start_n))
+        }
+        (None, Some(e)) => {
+            let end_n = e.0.trim().parse::<i16>().ok()?;
+            if end_n == 0 {
+                return None;
+            }
+            Some(GridPlacement::end(end_n))
+        }
+        (None, None) => None,
+    }
+}
+
+fn find_closing_paren(s: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                if depth == 0 {
+                    return Some(i);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn next_css_token(s: &str) -> (&str, &str) {
+    let s = s.trim_start();
+    if s.is_empty() {
+        return ("", "");
+    }
+    // Function call token
+    if let Some(paren) = s.find('(') {
+        let name = &s[..paren];
+        if !name.contains(char::is_whitespace)
+            && let Some(end) = find_closing_paren(&s[paren + 1..]) {
+                let end_abs = paren + 1 + end + 1;
+                return (&s[..end_abs], s[end_abs..].trim_start());
+            }
+    }
+    if let Some(ws) = s.find(char::is_whitespace) {
+        (&s[..ws], s[ws..].trim_start())
+    } else {
+        (s, "")
+    }
+}
+
+fn split_css_list(s: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(s[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    let last = s[start..].trim();
+    if !last.is_empty() {
+        parts.push(last);
+    }
+    parts
+}
+
+/// Parse a CSS color string to Bevy Color.
+/// Supports named colors, hex, rgb/rgba (legacy + modern), hsl/hsla.
 pub fn parse_color(value: &str) -> Option<Color> {
     let value = value.trim().to_lowercase();
 
-    // Named colors
-    match value.as_str() {
-        "transparent" => return Some(Color::NONE),
-        "black" => return Some(Color::BLACK),
-        "white" => return Some(Color::WHITE),
-        "red" => return Some(Color::srgb(1.0, 0.0, 0.0)),
-        "green" => return Some(Color::srgb(0.0, 1.0, 0.0)),
-        "blue" => return Some(Color::srgb(0.0, 0.0, 1.0)),
-        "yellow" => return Some(Color::srgb(1.0, 1.0, 0.0)),
-        "cyan" => return Some(Color::srgb(0.0, 1.0, 1.0)),
-        "magenta" => return Some(Color::srgb(1.0, 0.0, 1.0)),
-        "gray" | "grey" => return Some(Color::srgb(0.5, 0.5, 0.5)),
-        "darkgray" | "darkgrey" => return Some(Color::srgb(0.25, 0.25, 0.25)),
-        "lightgray" | "lightgrey" => return Some(Color::srgb(0.75, 0.75, 0.75)),
-        "orange" => return Some(Color::srgb(1.0, 0.65, 0.0)),
-        "pink" => return Some(Color::srgb(1.0, 0.75, 0.8)),
-        "purple" => return Some(Color::srgb(0.5, 0.0, 0.5)),
-        "brown" => return Some(Color::srgb(0.6, 0.3, 0.0)),
-        _ => {}
+    if let Some(c) = named_color(&value) {
+        return Some(c);
     }
 
-    // Hex color: #RGB, #RGBA, #RRGGBB, #RRGGBBAA
-    if let Some(hex) = value.strip_prefix("#") {
+    if let Some(hex) = value.strip_prefix('#') {
         return parse_hex_color(hex);
     }
 
-    // rgb(r, g, b) or rgba(r, g, b, a)
+    if value.starts_with("hsl") {
+        return parse_hsl_color(&value);
+    }
+
     if value.starts_with("rgb") {
         return parse_rgb_color(&value);
     }
@@ -349,19 +1069,165 @@ pub fn parse_color(value: &str) -> Option<Color> {
     None
 }
 
+fn named_color(value: &str) -> Option<Color> {
+    // CSS Level 1–3 named colors (subset of full table; includes common aliases)
+    let (r, g, b) = match value {
+        "transparent" => return Some(Color::NONE),
+        "black" => (0, 0, 0),
+        "silver" => (192, 192, 192),
+        "gray" | "grey" => (128, 128, 128),
+        "white" => (255, 255, 255),
+        "maroon" => (128, 0, 0),
+        "red" => (255, 0, 0),
+        "purple" => (128, 0, 128),
+        "fuchsia" | "magenta" => (255, 0, 255),
+        "green" => (0, 128, 0),
+        "lime" => (0, 255, 0),
+        "olive" => (128, 128, 0),
+        "yellow" => (255, 255, 0),
+        "navy" => (0, 0, 128),
+        "blue" => (0, 0, 255),
+        "teal" => (0, 128, 128),
+        "aqua" | "cyan" => (0, 255, 255),
+        "orange" => (255, 165, 0),
+        "aliceblue" => (240, 248, 255),
+        "antiquewhite" => (250, 235, 215),
+        "aquamarine" => (127, 255, 212),
+        "azure" => (240, 255, 255),
+        "beige" => (245, 245, 220),
+        "bisque" => (255, 228, 196),
+        "blanchedalmond" => (255, 235, 205),
+        "blueviolet" => (138, 43, 226),
+        "brown" => (165, 42, 42),
+        "burlywood" => (222, 184, 135),
+        "cadetblue" => (95, 158, 160),
+        "chartreuse" => (127, 255, 0),
+        "chocolate" => (210, 105, 30),
+        "coral" => (255, 127, 80),
+        "cornflowerblue" => (100, 149, 237),
+        "cornsilk" => (255, 248, 220),
+        "crimson" => (220, 20, 60),
+        "darkblue" => (0, 0, 139),
+        "darkcyan" => (0, 139, 139),
+        "darkgoldenrod" => (184, 134, 11),
+        "darkgray" | "darkgrey" => (169, 169, 169),
+        "darkgreen" => (0, 100, 0),
+        "darkkhaki" => (189, 183, 107),
+        "darkmagenta" => (139, 0, 139),
+        "darkolivegreen" => (85, 107, 47),
+        "darkorange" => (255, 140, 0),
+        "darkorchid" => (153, 50, 204),
+        "darkred" => (139, 0, 0),
+        "darksalmon" => (233, 150, 122),
+        "darkseagreen" => (143, 188, 143),
+        "darkslateblue" => (72, 61, 139),
+        "darkslategray" | "darkslategrey" => (47, 79, 79),
+        "darkturquoise" => (0, 206, 209),
+        "darkviolet" => (148, 0, 211),
+        "deeppink" => (255, 20, 147),
+        "deepskyblue" => (0, 191, 255),
+        "dimgray" | "dimgrey" => (105, 105, 105),
+        "dodgerblue" => (30, 144, 255),
+        "firebrick" => (178, 34, 34),
+        "floralwhite" => (255, 250, 240),
+        "forestgreen" => (34, 139, 34),
+        "gainsboro" => (220, 220, 220),
+        "ghostwhite" => (248, 248, 255),
+        "gold" => (255, 215, 0),
+        "goldenrod" => (218, 165, 32),
+        "greenyellow" => (173, 255, 47),
+        "honeydew" => (240, 255, 240),
+        "hotpink" => (255, 105, 180),
+        "indianred" => (205, 92, 92),
+        "indigo" => (75, 0, 130),
+        "ivory" => (255, 255, 240),
+        "khaki" => (240, 230, 140),
+        "lavender" => (230, 230, 250),
+        "lavenderblush" => (255, 240, 245),
+        "lawngreen" => (124, 252, 0),
+        "lemonchiffon" => (255, 250, 205),
+        "lightblue" => (173, 216, 230),
+        "lightcoral" => (240, 128, 128),
+        "lightcyan" => (224, 255, 255),
+        "lightgoldenrodyellow" => (250, 250, 210),
+        "lightgray" | "lightgrey" => (211, 211, 211),
+        "lightgreen" => (144, 238, 144),
+        "lightpink" => (255, 182, 193),
+        "lightsalmon" => (255, 160, 122),
+        "lightseagreen" => (32, 178, 170),
+        "lightskyblue" => (135, 206, 250),
+        "lightslategray" | "lightslategrey" => (119, 136, 153),
+        "lightsteelblue" => (176, 196, 222),
+        "lightyellow" => (255, 255, 224),
+        "limegreen" => (50, 205, 50),
+        "linen" => (250, 240, 230),
+        "mediumaquamarine" => (102, 205, 170),
+        "mediumblue" => (0, 0, 205),
+        "mediumorchid" => (186, 85, 211),
+        "mediumpurple" => (147, 112, 219),
+        "mediumseagreen" => (60, 179, 113),
+        "mediumslateblue" => (123, 104, 238),
+        "mediumspringgreen" => (0, 250, 154),
+        "mediumturquoise" => (72, 209, 204),
+        "mediumvioletred" => (199, 21, 133),
+        "midnightblue" => (25, 25, 112),
+        "mintcream" => (245, 255, 250),
+        "mistyrose" => (255, 228, 225),
+        "moccasin" => (255, 228, 181),
+        "navajowhite" => (255, 222, 173),
+        "oldlace" => (253, 245, 230),
+        "olivedrab" => (107, 142, 35),
+        "orangered" => (255, 69, 0),
+        "orchid" => (218, 112, 214),
+        "palegoldenrod" => (238, 232, 170),
+        "palegreen" => (152, 251, 152),
+        "paleturquoise" => (175, 238, 238),
+        "palevioletred" => (219, 112, 147),
+        "papayawhip" => (255, 239, 213),
+        "peachpuff" => (255, 218, 185),
+        "peru" => (205, 133, 63),
+        "pink" => (255, 192, 203),
+        "plum" => (221, 160, 221),
+        "powderblue" => (176, 224, 230),
+        "rebeccapurple" => (102, 51, 153),
+        "rosybrown" => (188, 143, 143),
+        "royalblue" => (65, 105, 225),
+        "saddlebrown" => (139, 69, 19),
+        "salmon" => (250, 128, 114),
+        "sandybrown" => (244, 164, 96),
+        "seagreen" => (46, 139, 87),
+        "seashell" => (255, 245, 238),
+        "sienna" => (160, 82, 45),
+        "skyblue" => (135, 206, 235),
+        "slateblue" => (106, 90, 205),
+        "slategray" | "slategrey" => (112, 128, 144),
+        "snow" => (255, 250, 250),
+        "springgreen" => (0, 255, 127),
+        "steelblue" => (70, 130, 180),
+        "tan" => (210, 180, 140),
+        "thistle" => (216, 191, 216),
+        "tomato" => (255, 99, 71),
+        "turquoise" => (64, 224, 208),
+        "violet" => (238, 130, 238),
+        "wheat" => (245, 222, 179),
+        "whitesmoke" => (245, 245, 245),
+        "yellowgreen" => (154, 205, 50),
+        _ => return None,
+    };
+    Some(Color::srgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0))
+}
+
 fn parse_hex_color(hex: &str) -> Option<Color> {
     let hex = hex.trim();
 
     let (r, g, b, a) = match hex.len() {
         3 => {
-            // #RGB -> #RRGGBB
             let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
             let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
             let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
             (r, g, b, 255u8)
         }
         4 => {
-            // #RGBA -> #RRGGBBAA
             let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
             let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
             let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
@@ -369,14 +1235,12 @@ fn parse_hex_color(hex: &str) -> Option<Color> {
             (r, g, b, a)
         }
         6 => {
-            // #RRGGBB
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
             let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
             let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
             (r, g, b, 255u8)
         }
         8 => {
-            // #RRGGBBAA
             let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
             let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
             let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
@@ -394,31 +1258,165 @@ fn parse_hex_color(hex: &str) -> Option<Color> {
     ))
 }
 
+fn parse_color_channel(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if let Some(pct) = s.strip_suffix('%') {
+        return pct.trim().parse::<f32>().ok().map(|n| (n / 100.0).clamp(0.0, 1.0));
+    }
+    let n: f32 = s.parse().ok()?;
+    if n > 1.0 {
+        Some((n / 255.0).clamp(0.0, 1.0))
+    } else {
+        Some(n.clamp(0.0, 1.0))
+    }
+}
+
+fn parse_alpha_channel(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if let Some(pct) = s.strip_suffix('%') {
+        return pct.trim().parse::<f32>().ok().map(|n| (n / 100.0).clamp(0.0, 1.0));
+    }
+    s.parse::<f32>().ok().map(|n| n.clamp(0.0, 1.0))
+}
+
 fn parse_rgb_color(value: &str) -> Option<Color> {
-    // Remove "rgb(" or "rgba(" and ")"
     let inner = value
         .trim_start_matches("rgba(")
         .trim_start_matches("rgb(")
-        .trim_end_matches(")");
+        .trim_end_matches(')')
+        .trim();
 
-    let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
-
-    let r: f32 = parts.first()?.parse().ok()?;
-    let g: f32 = parts.get(1)?.parse().ok()?;
-    let b: f32 = parts.get(2)?.parse().ok()?;
-    let a: f32 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(1.0);
-
-    // Normalize to 0-1 range if values are 0-255
-    let (r, g, b) = if r > 1.0 || g > 1.0 || b > 1.0 {
-        (r / 255.0, g / 255.0, b / 255.0)
+    // Modern: rgb(0 0 0 / 0.5) or legacy: rgb(0, 0, 0, 0.5)
+    let (channels, alpha) = if let Some((rgb_part, a_part)) = inner.split_once('/') {
+        (rgb_part.trim(), Some(a_part.trim()))
     } else {
-        (r, g, b)
+        (inner, None)
+    };
+
+    let parts: Vec<&str> = if channels.contains(',') {
+        channels.split(',').map(|s| s.trim()).collect()
+    } else {
+        channels.split_whitespace().collect()
+    };
+
+    let r = parse_color_channel(parts.first()?)?;
+    let g = parse_color_channel(parts.get(1)?)?;
+    let b = parse_color_channel(parts.get(2)?)?;
+    let a = if let Some(a) = alpha {
+        parse_alpha_channel(a)?
+    } else if parts.len() >= 4 {
+        parse_alpha_channel(parts[3])?
+    } else {
+        1.0
     };
 
     Some(Color::srgba(r, g, b, a))
 }
 
-/// Convert StyleProps to Bevy's Node (formerly Style) component
+fn parse_hsl_color(value: &str) -> Option<Color> {
+    let inner = value
+        .trim_start_matches("hsla(")
+        .trim_start_matches("hsl(")
+        .trim_end_matches(')')
+        .trim();
+
+    let (channels, alpha) = if let Some((hsl_part, a_part)) = inner.split_once('/') {
+        (hsl_part.trim(), Some(a_part.trim()))
+    } else {
+        (inner, None)
+    };
+
+    let parts: Vec<&str> = if channels.contains(',') {
+        channels.split(',').map(|s| s.trim()).collect()
+    } else {
+        channels.split_whitespace().collect()
+    };
+
+    let h = parse_hue(parts.first()?)?;
+    let s = parse_percentage(parts.get(1)?)?;
+    let l = parse_percentage(parts.get(2)?)?;
+    let a = if let Some(a) = alpha {
+        parse_alpha_channel(a)?
+    } else if parts.len() >= 4 {
+        parse_alpha_channel(parts[3])?
+    } else {
+        1.0
+    };
+
+    let (r, g, b) = hsl_to_rgb(h, s, l);
+    Some(Color::srgba(r, g, b, a))
+}
+
+fn parse_hue(s: &str) -> Option<f32> {
+    let s = s.trim().to_lowercase();
+    if let Some(deg) = s.strip_suffix("deg") {
+        return deg.trim().parse().ok();
+    }
+    if let Some(turn) = s.strip_suffix("turn") {
+        return turn.trim().parse::<f32>().ok().map(|t| t * 360.0);
+    }
+    if let Some(rad) = s.strip_suffix("rad") {
+        return rad.trim().parse::<f32>().ok().map(|r| r.to_degrees());
+    }
+    s.parse().ok()
+}
+
+fn parse_percentage(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if let Some(pct) = s.strip_suffix('%') {
+        return pct.trim().parse::<f32>().ok().map(|n| (n / 100.0).clamp(0.0, 1.0));
+    }
+    s.parse::<f32>().ok().map(|n| {
+        if n > 1.0 {
+            (n / 100.0).clamp(0.0, 1.0)
+        } else {
+            n.clamp(0.0, 1.0)
+        }
+    })
+}
+
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
+    let h = ((h % 360.0) + 360.0) % 360.0;
+    if s == 0.0 {
+        return (l, l, l);
+    }
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+    let p = 2.0 * l - q;
+    let hk = h / 360.0;
+    let tr = (hk + 1.0 / 3.0).rem_euclid(1.0);
+    let tg = hk.rem_euclid(1.0);
+    let tb = (hk - 1.0 / 3.0).rem_euclid(1.0);
+    (
+        hue_to_rgb(p, q, tr),
+        hue_to_rgb(p, q, tg),
+        hue_to_rgb(p, q, tb),
+    )
+}
+
+fn hue_to_rgb(p: f32, q: f32, t: f32) -> f32 {
+    let t = if t < 0.0 {
+        t + 1.0
+    } else if t > 1.0 {
+        t - 1.0
+    } else {
+        t
+    };
+    if t < 1.0 / 6.0 {
+        p + (q - p) * 6.0 * t
+    } else if t < 1.0 / 2.0 {
+        q
+    } else if t < 2.0 / 3.0 {
+        p + (q - p) * (2.0 / 3.0 - t) * 6.0
+    } else {
+        p
+    }
+}
+
+/// Convert StyleProps to Bevy's Node component
 pub fn json_to_style(props: &StyleProps) -> Node {
     let mut style = Node::default();
 
@@ -440,6 +1438,9 @@ pub fn json_to_style(props: &StyleProps) -> Node {
     }
     if let Some(ref h) = props.max_height {
         style.max_height = parse_val(&h.0);
+    }
+    if let Some(ref ar) = props.aspect_ratio {
+        style.aspect_ratio = parse_aspect_ratio(&ar.0);
     }
 
     // Flexbox
@@ -477,10 +1478,40 @@ pub fn json_to_style(props: &StyleProps) -> Node {
         style.justify_self = parse_justify_self(js);
     }
 
-    // Margins - handle shorthand first
+    // CSS Grid
+    if let Some(ref cols) = props.grid_template_columns {
+        style.grid_template_columns = parse_grid_template(cols);
+    }
+    if let Some(ref rows) = props.grid_template_rows {
+        style.grid_template_rows = parse_grid_template(rows);
+    }
+    if let Some(ref cols) = props.grid_auto_columns {
+        style.grid_auto_columns = parse_grid_auto_tracks(cols);
+    }
+    if let Some(ref rows) = props.grid_auto_rows {
+        style.grid_auto_rows = parse_grid_auto_tracks(rows);
+    }
+    if let Some(ref flow) = props.grid_auto_flow {
+        style.grid_auto_flow = parse_grid_auto_flow(flow);
+    }
+    if let Some(placement) = build_grid_placement(
+        props.grid_column.as_ref(),
+        props.grid_column_start.as_ref(),
+        props.grid_column_end.as_ref(),
+    ) {
+        style.grid_column = placement;
+    }
+    if let Some(placement) = build_grid_placement(
+        props.grid_row.as_ref(),
+        props.grid_row_start.as_ref(),
+        props.grid_row_end.as_ref(),
+    ) {
+        style.grid_row = placement;
+    }
+
+    // Margins — multi-value shorthand, then per-side overrides
     if let Some(ref m) = props.margin {
-        let val = parse_val(&m.0);
-        style.margin = UiRect::all(val);
+        style.margin = parse_ui_rect_shorthand(&m.0);
     }
     if let Some(ref m) = props.margin_top {
         style.margin.top = parse_val(&m.0);
@@ -495,10 +1526,9 @@ pub fn json_to_style(props: &StyleProps) -> Node {
         style.margin.left = parse_val(&m.0);
     }
 
-    // Padding - handle shorthand first
+    // Padding
     if let Some(ref p) = props.padding {
-        let val = parse_val(&p.0);
-        style.padding = UiRect::all(val);
+        style.padding = parse_ui_rect_shorthand(&p.0);
     }
     if let Some(ref p) = props.padding_top {
         style.padding.top = parse_val(&p.0);
@@ -531,9 +1561,8 @@ pub fn json_to_style(props: &StyleProps) -> Node {
     }
 
     // Border — accept `border` or `borderWidth` as uniform width
-    if let Some(ref b) = props.border.as_ref().or(props.border_width.as_ref()) {
-        let val = parse_val(&b.0);
-        style.border = UiRect::all(val);
+    if let Some(b) = props.border.as_ref().or(props.border_width.as_ref()) {
+        style.border = parse_ui_rect_shorthand(&b.0);
     }
     if let Some(ref b) = props.border_top {
         style.border.top = parse_val(&b.0);
@@ -548,11 +1577,25 @@ pub fn json_to_style(props: &StyleProps) -> Node {
         style.border.left = parse_val(&b.0);
     }
 
-    // Gap - shorthand first, then specific overrides
+    // Gap
     if let Some(ref g) = props.gap {
-        let val = parse_val(&g.0);
-        style.row_gap = val;
-        style.column_gap = val;
+        let parts: Vec<&str> = g.0.split_whitespace().collect();
+        match parts.as_slice() {
+            [both] => {
+                let val = parse_val(both);
+                style.row_gap = val;
+                style.column_gap = val;
+            }
+            [row, col] => {
+                style.row_gap = parse_val(row);
+                style.column_gap = parse_val(col);
+            }
+            _ => {
+                let val = parse_val(&g.0);
+                style.row_gap = val;
+                style.column_gap = val;
+            }
+        }
     }
     if let Some(ref g) = props.row_gap {
         style.row_gap = parse_val(&g.0);
@@ -566,9 +1609,18 @@ pub fn json_to_style(props: &StyleProps) -> Node {
         style.display = parse_display(d);
     }
 
-    // Overflow
+    // Overflow — shorthand then per-axis overrides
     if let Some(ref o) = props.overflow {
         style.overflow = parse_overflow(o);
+    }
+    if let Some(ref ox) = props.overflow_x {
+        style.overflow.x = parse_overflow_axis(ox);
+    }
+    if let Some(ref oy) = props.overflow_y {
+        style.overflow.y = parse_overflow_axis(oy);
+    }
+    if let Some(ref ocm) = props.overflow_clip_margin {
+        style.overflow_clip_margin = parse_overflow_clip_margin(ocm);
     }
 
     style
@@ -590,10 +1642,39 @@ mod tests {
     #[test]
     fn test_parse_color() {
         assert!(parse_color("red").is_some());
+        assert!(parse_color("rebeccapurple").is_some());
+        assert!(parse_color("cornflowerblue").is_some());
         assert!(parse_color("#ff0000").is_some());
         assert!(parse_color("#f00").is_some());
         assert!(parse_color("rgb(255, 0, 0)").is_some());
         assert!(parse_color("rgba(255, 0, 0, 0.5)").is_some());
+    }
+
+    #[test]
+    fn test_parse_color_modern_rgb() {
+        let c = parse_color("rgb(0 0 0 / 0.5)").unwrap();
+        let s = c.to_srgba();
+        assert!((s.red - 0.0).abs() < 0.01);
+        assert!((s.alpha - 0.5).abs() < 0.01);
+
+        let c2 = parse_color("rgb(255 128 0)").unwrap();
+        let s2 = c2.to_srgba();
+        assert!((s2.red - 1.0).abs() < 0.01);
+        assert!((s2.green - 128.0 / 255.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_color_hsl() {
+        let red = parse_color("hsl(0, 100%, 50%)").unwrap();
+        let s = red.to_srgba();
+        assert!((s.red - 1.0).abs() < 0.02);
+        assert!(s.green < 0.02);
+        assert!(s.blue < 0.02);
+
+        let modern = parse_color("hsla(120 100% 50% / 0.5)").unwrap();
+        let ms = modern.to_srgba();
+        assert!(ms.green > 0.9);
+        assert!((ms.alpha - 0.5).abs() < 0.01);
     }
 
     #[test]
@@ -607,5 +1688,126 @@ mod tests {
         let style_border = json_to_style(&props_border);
         assert_eq!(style_border.border.left, Val::Px(4.0));
     }
-}
 
+    #[test]
+    fn test_margin_padding_shorthand() {
+        let props: StyleProps =
+            serde_json::from_str(r#"{"margin": "8px 16px", "padding": "1px 2px 3px 4px"}"#)
+                .unwrap();
+        let style = json_to_style(&props);
+        assert_eq!(style.margin.top, Val::Px(8.0));
+        assert_eq!(style.margin.bottom, Val::Px(8.0));
+        assert_eq!(style.margin.left, Val::Px(16.0));
+        assert_eq!(style.margin.right, Val::Px(16.0));
+        assert_eq!(style.padding.top, Val::Px(1.0));
+        assert_eq!(style.padding.right, Val::Px(2.0));
+        assert_eq!(style.padding.bottom, Val::Px(3.0));
+        assert_eq!(style.padding.left, Val::Px(4.0));
+    }
+
+    #[test]
+    fn test_aspect_ratio_and_overflow_axes() {
+        let props: StyleProps = serde_json::from_str(
+            r#"{
+                "aspectRatio": "16/9",
+                "overflowX": "scroll",
+                "overflowY": "hidden",
+                "overflowClipMargin": "content-box 4px"
+            }"#,
+        )
+        .unwrap();
+        let style = json_to_style(&props);
+        assert!((style.aspect_ratio.unwrap() - 16.0 / 9.0).abs() < 0.001);
+        assert_eq!(style.overflow.x, OverflowAxis::Scroll);
+        assert_eq!(style.overflow.y, OverflowAxis::Clip);
+        assert_eq!(
+            style.overflow_clip_margin.visual_box,
+            bevy::ui::OverflowClipBox::ContentBox
+        );
+        assert!((style.overflow_clip_margin.margin - 4.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_grid_template_and_placement() {
+        let props: StyleProps = serde_json::from_str(
+            r#"{
+                "display": "grid",
+                "gridTemplateColumns": "1fr 100px auto",
+                "gridTemplateRows": "repeat(2, 50px)",
+                "gridColumn": "1 / span 2",
+                "gridRow": "2 / 4",
+                "gridAutoFlow": "row dense"
+            }"#,
+        )
+        .unwrap();
+        let style = json_to_style(&props);
+        assert_eq!(style.display, Display::Grid);
+        assert_eq!(style.grid_template_columns.len(), 3);
+        assert_eq!(style.grid_template_rows.len(), 2);
+        assert_eq!(style.grid_auto_flow, GridAutoFlow::RowDense);
+    }
+
+    #[test]
+    fn test_border_radius_shorthand_and_corners() {
+        let props: StyleProps = serde_json::from_str(
+            r#"{
+                "borderRadius": "8px 16px",
+                "borderTopLeftRadius": "4px"
+            }"#,
+        )
+        .unwrap();
+        let radius = style_to_border_radius(&props).unwrap();
+        assert_eq!(radius.top_left, Val::Px(4.0));
+        assert_eq!(radius.top_right, Val::Px(16.0));
+        assert_eq!(radius.bottom_right, Val::Px(8.0));
+        assert_eq!(radius.bottom_left, Val::Px(16.0));
+    }
+
+    #[test]
+    fn test_per_side_border_colors() {
+        let props: StyleProps = serde_json::from_str(
+            r#"{
+                "borderColor": "red",
+                "borderTopColor": "blue"
+            }"#,
+        )
+        .unwrap();
+        let color = style_to_border_color(&props).unwrap();
+        assert_eq!(color.top, parse_color("blue").unwrap());
+        assert_eq!(color.left, parse_color("red").unwrap());
+    }
+
+    #[test]
+    fn test_box_shadow_and_gradient() {
+        let shadow = parse_box_shadow("2px 4px 8px 0px rgba(0, 0, 0, 0.5)").unwrap();
+        assert_eq!(shadow.0.len(), 1);
+        assert_eq!(shadow.0[0].x_offset, Val::Px(2.0));
+        assert_eq!(shadow.0[0].y_offset, Val::Px(4.0));
+        assert_eq!(shadow.0[0].blur_radius, Val::Px(8.0));
+
+        let grad = parse_background_gradient("linear-gradient(to right, red, blue)").unwrap();
+        assert_eq!(grad.0.len(), 1);
+    }
+
+    #[test]
+    fn test_text_and_image_helpers() {
+        assert_eq!(parse_text_align("center"), Some(Justify::Center));
+        assert_eq!(
+            parse_line_height("1.5"),
+            Some(LineHeight::RelativeToFont(1.5))
+        );
+        assert_eq!(parse_line_height("24px"), Some(LineHeight::Px(24.0)));
+        assert_eq!(
+            parse_font_family("fonts/FiraSans.ttf").as_deref(),
+            Some("fonts/FiraSans.ttf")
+        );
+        assert!(parse_font_family("sans-serif").is_none());
+        assert_eq!(parse_object_fit("fill"), NodeImageMode::Stretch);
+        assert_eq!(parse_object_fit("contain"), NodeImageMode::Auto);
+
+        let props: StyleProps =
+            serde_json::from_str(r##"{"tint": "#ff0000", "opacity": 0.5}"##).unwrap();
+        assert!(style_tint(&props).is_some());
+        assert!((style_opacity(&props).unwrap() - 0.5).abs() < 0.001);
+    }
+}

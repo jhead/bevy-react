@@ -1,30 +1,30 @@
 # Style Props
 
-CSS-like styles are passed on component `style` props, serialized to JSON, and converted on the Rust side in `plugin/src/react/style.rs` (layout) plus `plugin/src/react/systems/render.rs` (colors, radius, z-index, text).
+CSS-like styles are passed on component `style` props, serialized to JSON, and converted on the Rust side in `plugin/src/react/style.rs` (layout + parsers) plus `plugin/src/react/systems/render.rs` (colors, radius, z-index, text, and other visual components).
 
-TypeScript types live in `packages/bevy-react/src/types.ts` (`BevyStyle`). The two sides are **not fully aligned** yet — see [Known drift](#known-drift).
+TypeScript types live in `packages/bevy-react/src/types.ts` (`BevyStyle`).
 
 ## Value types
 
 | Kind | Accepted forms |
 |---|---|
 | Length (`width`, `margin`, …) | number (treated as `px`), `"100px"`, `"50%"`, `"auto"`, `"10vw"`, `"20vh"` |
-| Color | named (see below), `#RGB` / `#RGBA` / `#RRGGBB` / `#RRGGBBAA`, `rgb(...)`, `rgba(...)` |
+| Scalar (`aspectRatio`, `lineHeight`, `opacity`) | number (no implied `px`), or string (`"16/9"`, `"1.5"`, `"50%"`) |
+| Color | named (CSS Level 1–3 table), `#RGB` / `#RGBA` / `#RRGGBB` / `#RRGGBBAA`, `rgb`/`rgba` (legacy commas or modern space/`/` syntax), `hsl`/`hsla` |
 | Enums | string keywords as listed per property |
 
-**Named colors (Rust):** `transparent`, `black`, `white`, `red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `gray`/`grey`, `darkgray`/`darkgrey`, `lightgray`/`lightgrey`, `orange`, `pink`, `purple`, `brown`.
-
-Shorthands for `margin` / `padding` / `border` / `gap` / `borderRadius` currently apply a **single** value to all sides (multi-value CSS shorthands like `"8px 16px"` are not supported yet).
+**Shorthands:** `margin` / `padding` / `border` / `borderRadius` / `gap` accept 1–4 CSS values (e.g. `"8px 16px"`). Per-side / per-corner props override the shorthand.
 
 ## Layout props → Bevy `Node`
 
-These are applied via `json_to_style` in Rust.
+Applied via `json_to_style` (used by the render system).
 
 | Prop (camelCase) | Notes / accepted values |
 |---|---|
 | `width`, `height` | Length |
 | `minWidth`, `minHeight` | Length |
 | `maxWidth`, `maxHeight` | Length |
+| `aspectRatio` | number or `"16/9"` → `Node::aspect_ratio` |
 | `flexDirection` | `row`, `column`, `row-reverse` / `rowReverse`, `column-reverse` / `columnReverse`, `col` |
 | `flexWrap` | `nowrap` / `noWrap` / `no-wrap`, `wrap`, `wrap-reverse` / `wrapReverse` |
 | `flexGrow`, `flexShrink` | number |
@@ -35,41 +35,66 @@ These are applied via `json_to_style` in Rust.
 | `justifyContent` | `start` / `flex-start`, `end` / `flex-end`, `center`, `space-between` / `spaceBetween`, `space-around` / `spaceAround`, `space-evenly` / `spaceEvenly` |
 | `justifyItems` | `start` / `flex-start`, `end` / `flex-end`, `center`, `baseline`, `stretch` |
 | `justifySelf` | `auto`, plus same as `justifyItems` |
-| `margin` | Length → all sides |
+| `gridTemplateColumns`, `gridTemplateRows` | Track list: `1fr`, `100px`, `auto`, `min-content`, `max-content`, `%`, `fit-content(…)`, `repeat(N, track)` |
+| `gridAutoColumns`, `gridAutoRows` | Space-separated track sizes |
+| `gridAutoFlow` | `row`, `column`, `row dense`, `column dense` |
+| `gridColumn`, `gridRow` | Placement: `"1"`, `"1 / 3"`, `"span 2"`, `"1 / span 2"` |
+| `gridColumnStart/End`, `gridRowStart/End` | Line indexes (override shorthand when set alone) |
+| `margin` | 1–4 value shorthand → `UiRect` |
 | `marginTop`, `marginRight`, `marginBottom`, `marginLeft` | Length (override shorthand) |
-| `padding` | Length → all sides |
+| `padding` | 1–4 value shorthand → `UiRect` |
 | `paddingTop`, `paddingRight`, `paddingBottom`, `paddingLeft` | Length |
 | `position` | `relative`, `absolute` |
 | `top`, `right`, `bottom`, `left` | Length |
-| `border` | Length → border width on all sides |
+| `border` / `borderWidth` | 1–4 value shorthand → border width |
 | `borderTop`, `borderRight`, `borderBottom`, `borderLeft` | Length (override shorthand) |
-| `gap` | Length → both row and column gap |
+| `gap` | 1 value (both axes) or 2 values (`row column`) |
 | `rowGap`, `columnGap` | Length |
-| `display` | Rust: `flex`, `none`, `grid`, `block`. TS types currently only list `flex` \| `none`. `grid` parses but grid template props are not implemented. |
-| `overflow` | `visible`, `clip` / `hidden`, `scroll` (applies to both axes) |
+| `display` | `flex`, `none`, `grid`, `block` |
+| `overflow` | `visible`, `clip` / `hidden`, `scroll` (both axes) |
+| `overflowX`, `overflowY` | Per-axis overflow (override shorthand) |
+| `overflowClipMargin` | `content-box` / `padding-box` / `border-box`, optional `px` margin (`"content-box 4px"`), or bare length |
 
-## Visual / text props (applied outside `Node`)
+## Visual / text / image helpers
 
-| Prop | Effect |
+Parsers and builders live in `style.rs`. Layout-independent props are applied by `render.rs` (some helpers below still need render wiring — see [Render wiring](#render-wiring)).
+
+| Prop | Effect / helper |
 |---|---|
-| `backgroundColor` | `BackgroundColor` |
-| `borderColor` | `BorderColor` |
-| `borderRadius` | `BorderRadius::all` (single value) |
+| `backgroundColor` | `BackgroundColor` via `parse_color` |
+| `borderColor` | Uniform border; use `style_to_border_color` for per-side |
+| `borderTopColor`, `borderRightColor`, `borderBottomColor`, `borderLeftColor` | Per-side via `style_to_border_color` |
+| `borderRadius` | 1–4 value shorthand via `style_to_border_radius` |
+| `borderTopLeftRadius`, `borderTopRightRadius`, `borderBottomRightRadius`, `borderBottomLeftRadius` | Per-corner overrides |
 | `zIndex` | `ZIndex` |
 | `color` | `TextColor` (text nodes) |
 | `fontSize` | `TextFont` size (text nodes) |
+| `fontFamily` | Asset path string via `parse_font_family` (generic CSS families ignored) |
+| `textAlign` | `Justify` via `parse_text_align` (`left`/`start`, `right`/`end`, `center`, `justify`) |
+| `lineHeight` | `LineHeight` via `parse_line_height` (unitless → `RelativeToFont`, `px` → `Px`) |
+| `opacity` | `0`–`1` or `%` via `style_opacity` (no Bevy `UiOpacity`; multiply into colors) |
+| `boxShadow` | `BoxShadow` via `parse_box_shadow` / `style_to_box_shadow` |
+| `backgroundImage` / `backgroundGradient` | `linear-gradient(...)` → `BackgroundGradient` via `style_to_background_gradient` |
+| `objectFit` | `NodeImageMode` via `parse_object_fit` (`fill`/`stretch` → Stretch; others → Auto) |
+| `tint` / `tintColor` | Image tint via `style_tint` |
 
-## Known drift
+## Render wiring
+
+These are **parsed and typed** in `style.rs` / `BevyStyle`, and layout props already flow through `json_to_style`. Visual helpers still need `render.rs` to call them for full end-to-end effect:
+
+- Per-corner `borderRadius` / per-side `border*Color` (render still uses `BorderRadius::all` / `BorderColor::all` on the uniform props)
+- `textAlign`, `lineHeight`, `fontFamily` (asset load)
+- `opacity`, `boxShadow`, `BackgroundGradient`
+- Image `objectFit`, `tint`
+
+`parse_color` extensions (named colors, HSL, modern `rgb`) apply immediately wherever render already calls `parse_color`.
+
+## Known limitations
 
 | Topic | Detail |
 |---|---|
-| Border width | TS declares `borderWidth`; Rust expects `border` / `borderTop` / … — `borderWidth` is currently ignored by Rust. Prefer `border` until Epic 2 reconciles the contracts. |
-| Per-side borders | Rust supports `borderTop` etc.; TS `BevyStyle` does not list them. |
-| Display | Rust accepts `grid` / `block`; TS union is narrower. |
-| Text styles | `color` / `fontSize` are on `StyleProps` in Rust and on `TextProps.style` in TS. |
-| `fontFamily` | Declared on TS `Text` styles as unsupported. |
-| Clearing props | Removing a style key on update may leave the previous Bevy component value (tracked in the project plan). |
-
-## Planned (not implemented)
-
-From [PROJECT_PLAN.md](PROJECT_PLAN.md) Epic 2: multi-value margin/padding/radius shorthands, fuller color parsing (`hsl`, modern `rgb` syntax), per-corner radius, per-side border colors, opacity, box shadow, gradients, grid templates, `aspectRatio`, axis-specific overflow, richer text layout (`textAlign`, `lineHeight`, fonts via assets), image `objectFit` / tint.
+| `objectFit` | Bevy `NodeImageMode` is Auto / Stretch / Sliced / Tiled — CSS `contain`/`cover` map to Auto |
+| `opacity` | No dedicated Bevy UI opacity component in 0.17 |
+| Grid `minmax()` / `auto-fill` | Not fully parsed; `repeat(N, track)` integer repeats work |
+| Atlas / nine-slice | Not exposed yet |
+| Text shadow / line-break | Not implemented |

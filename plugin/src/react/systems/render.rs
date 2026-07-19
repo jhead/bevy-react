@@ -187,7 +187,7 @@ pub fn process_react_messages(
                 };
 
                 log::debug!("Clearing container: {}", root_id);
-                handle_clear_container(&mut commands, &mut context);
+                handle_clear_container(&mut commands, *root, &mut context);
             }
 
             ReactClientProto::Complete => {
@@ -574,12 +574,42 @@ fn handle_insert_before(
     }
 }
 
-/// Clear all children from the root container
-fn handle_clear_container(commands: &mut Commands, context: &mut ReactContext) {
-    for (_node_id, entity) in context.nodes.drain() {
-        commands.entity(entity).despawn();
-    }
-    log::debug!("Cleared container: despawned all nodes");
+/// Clear root children only.
+///
+/// Must not drain the whole `ReactContext.nodes` map: concurrent React calls
+/// `ClearContainer` after creating the new tree but before attaching it to the
+/// root, so a full drain despawns the in-flight mount (blank first frame).
+fn handle_clear_container(
+    commands: &mut Commands,
+    context_entity: Entity,
+    context: &mut ReactContext,
+) {
+    let root = context.root.unwrap_or(context_entity);
+
+    // Defer so we can read `Children` after prior spawn/attach commands apply.
+    commands.queue(move |world: &mut World| {
+        let children: Vec<Entity> = world
+            .get_entity(root)
+            .ok()
+            .and_then(|e| e.get::<Children>().map(|c| c.iter().collect()))
+            .unwrap_or_default();
+
+        if children.is_empty() {
+            log::debug!("Cleared container: root had no children (no-op)");
+            return;
+        }
+
+        if let Some(mut ctx) = world.get_mut::<ReactContext>(context_entity) {
+            ctx.nodes.retain(|_, entity| !children.contains(entity));
+        }
+
+        for entity in children {
+            if world.get_entity(entity).is_ok() {
+                world.entity_mut(entity).despawn();
+            }
+        }
+        log::debug!("Cleared container: despawned root children only");
+    });
 }
 
 fn apply_visual_style(entity_commands: &mut EntityCommands, style_props: &StyleProps) {

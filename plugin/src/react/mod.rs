@@ -58,7 +58,8 @@ pub use bridge::{
 };
 pub use client::*;
 pub use embedded::EmbeddedBundleSource;
-pub use event_queue::{ReactEvent, ReactEventQueue};
+pub use event_queue::{FLUSH_EVENTS_SCRIPT, ReactEvent, ReactEventQueue};
+pub use native_functions::ReactJsExtension;
 pub use hmr::{ReactHmrRoot, ReactReloadFlag};
 pub use systems::*;
 pub use vite::*;

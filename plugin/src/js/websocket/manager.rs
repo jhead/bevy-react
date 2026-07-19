@@ -71,7 +71,10 @@ impl WebSocketManager {
 
         // Store the handle
         {
-            let mut connections = self.connections.lock().unwrap();
+            let Ok(mut connections) = self.connections.lock() else {
+                log::error!("[WebSocket] connections mutex poisoned during connect");
+                return 0;
+            };
             connections.insert(id, handle);
         }
 
@@ -83,11 +86,18 @@ impl WebSocketManager {
         // Spawn on a separate thread with its own tokio runtime (native only)
         #[cfg(not(target_arch = "wasm32"))]
         std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread()
+            let rt = match tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .worker_threads(2)
                 .build()
-                .expect("Failed to create WebSocket runtime");
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    log::error!("[WebSocket {}] Failed to create runtime: {e}", id);
+                    ready_state_clone.store(WS_CLOSED, Ordering::SeqCst);
+                    return;
+                }
+            };
 
             rt.block_on(async move {
                 log::info!("[WebSocket {}] Connecting to {}", id, url_clone);
@@ -178,14 +188,16 @@ impl WebSocketManager {
                 };
 
                 // Add Origin header for browser-like behavior
-                request
-                    .headers_mut()
-                    .insert("Origin", "http://localhost:5173".parse().unwrap());
+                if let Ok(value) = "http://localhost:5173".parse() {
+                    request.headers_mut().insert("Origin", value);
+                }
 
                 // Add Sec-WebSocket-Protocol header which Vite HMR expects
-                request
-                    .headers_mut()
-                    .insert("Sec-WebSocket-Protocol", "vite-hmr".parse().unwrap());
+                if let Ok(value) = "vite-hmr".parse() {
+                    request
+                        .headers_mut()
+                        .insert("Sec-WebSocket-Protocol", value);
+                }
 
                 log::info!("[WebSocket {}] Performing WebSocket handshake", id);
 
@@ -321,7 +333,9 @@ impl WebSocketManager {
 
     /// Send a message on a WebSocket connection
     pub fn send(&self, id: u32, data: String) -> Result<(), String> {
-        let connections = self.connections.lock().unwrap();
+        let Ok(connections) = self.connections.lock() else {
+            return Err("WebSocket connections mutex poisoned".to_string());
+        };
         if let Some(handle) = connections.get(&id) {
             if handle.ready_state.load(Ordering::SeqCst) != WS_OPEN {
                 return Err("WebSocket is not open".to_string());
@@ -337,7 +351,10 @@ impl WebSocketManager {
 
     /// Close a WebSocket connection
     pub fn close(&self, id: u32, _code: u16, _reason: String) {
-        let mut connections = self.connections.lock().unwrap();
+        let Ok(mut connections) = self.connections.lock() else {
+            log::error!("[WebSocket] connections mutex poisoned during close");
+            return;
+        };
         if let Some(handle) = connections.remove(&id) {
             handle.ready_state.store(WS_CLOSING, Ordering::SeqCst);
             log::info!("[WebSocket {}] Closing", id);
@@ -346,7 +363,10 @@ impl WebSocketManager {
 
     /// Get the ready state of a connection
     pub fn ready_state(&self, id: u32) -> u32 {
-        let connections = self.connections.lock().unwrap();
+        let Ok(connections) = self.connections.lock() else {
+            log::error!("[WebSocket] connections mutex poisoned during ready_state");
+            return WS_CLOSED;
+        };
         connections
             .get(&id)
             .map(|h| h.ready_state.load(Ordering::SeqCst))

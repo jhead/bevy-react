@@ -9,115 +9,111 @@ pub struct WebSocketExtension;
 impl JsEngineExtension for WebSocketExtension {
     fn register(&self, context: &mut Context, client: JsEngineClient) -> Result<(), JsError> {
         let manager = WebSocketManager::new(client);
-        register_websocket_functions(context, manager);
+        register_websocket_functions(context, manager)?;
         register_websocket_shim(context);
         Ok(())
     }
 }
 
 /// Register WebSocket native functions
-fn register_websocket_functions(context: &mut Context, manager: WebSocketManager) {
+fn register_websocket_functions(
+    context: &mut Context,
+    manager: WebSocketManager,
+) -> Result<(), JsError> {
     // Leak the manager to get a 'static reference for Boa
     // TODO: Maybe find a better way to do this without leaking
     let manager = Box::leak(Box::new(manager));
 
     // __ws_connect(url: string) -> number
-    context
-        .register_global_callable(
-            JsString::from("__ws_connect"),
-            1,
-            NativeFunction::from_copy_closure(
-                |_this: &JsValue, args: &[JsValue], _ctx: &mut Context| {
-                    let url = args
-                        .first()
-                        .and_then(|v| v.as_string())
-                        .map(|s| s.to_std_string_escaped())
-                        .unwrap_or_default();
+    context.register_global_callable(
+        JsString::from("__ws_connect"),
+        1,
+        NativeFunction::from_copy_closure(
+            |_this: &JsValue, args: &[JsValue], _ctx: &mut Context| {
+                let url = args
+                    .first()
+                    .and_then(|v| v.as_string())
+                    .map(|s| s.to_std_string_escaped())
+                    .unwrap_or_default();
 
-                    log::info!("[WebSocket Native] connect({})", url);
-                    let id = manager.connect(url);
-                    Ok(JsValue::from(id))
-                },
-            ),
-        )
-        .expect("Failed to register __ws_connect");
+                log::info!("[WebSocket Native] connect({})", url);
+                let id = manager.connect(url);
+                Ok(JsValue::from(id))
+            },
+        ),
+    )?;
 
     // __ws_send(id: number, data: string) -> void
-    context
-        .register_global_callable(
-            JsString::from("__ws_send"),
-            2,
-            NativeFunction::from_copy_closure(
-                |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                    let id = args
-                        .first()
-                        .and_then(|v| v.to_u32(ctx).ok())
-                        .unwrap_or(0);
-                    let data = args
-                        .get(1)
-                        .and_then(|v| v.as_string())
-                        .map(|s| s.to_std_string_escaped())
-                        .unwrap_or_default();
+    context.register_global_callable(
+        JsString::from("__ws_send"),
+        2,
+        NativeFunction::from_copy_closure(
+            |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
+                let id = args
+                    .first()
+                    .and_then(|v| v.to_u32(ctx).ok())
+                    .unwrap_or(0);
+                let data = args
+                    .get(1)
+                    .and_then(|v| v.as_string())
+                    .map(|s| s.to_std_string_escaped())
+                    .unwrap_or_default();
 
-                    log::debug!("[WebSocket Native] send({}, {} bytes)", id, data.len());
-                    if let Err(e) = manager.send(id, data) {
-                        log::error!("[WebSocket Native] send error: {}", e);
-                    }
-                    Ok(JsValue::undefined())
-                },
-            ),
-        )
-        .expect("Failed to register __ws_send");
+                log::debug!("[WebSocket Native] send({}, {} bytes)", id, data.len());
+                if let Err(e) = manager.send(id, data) {
+                    log::error!("[WebSocket Native] send error: {}", e);
+                }
+                Ok(JsValue::undefined())
+            },
+        ),
+    )?;
 
     // __ws_close(id: number, code: number, reason: string) -> void
-    context
-        .register_global_callable(
-            JsString::from("__ws_close"),
-            3,
-            NativeFunction::from_copy_closure(
-                |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                    let id = args
-                        .first()
-                        .and_then(|v| v.to_u32(ctx).ok())
-                        .unwrap_or(0);
-                    let code = args
-                        .get(1)
-                        .and_then(|v| v.to_u32(ctx).ok())
-                        .unwrap_or(1000) as u16;
-                    let reason = args
-                        .get(2)
-                        .and_then(|v| v.as_string())
-                        .map(|s| s.to_std_string_escaped())
-                        .unwrap_or_default();
+    context.register_global_callable(
+        JsString::from("__ws_close"),
+        3,
+        NativeFunction::from_copy_closure(
+            |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
+                let id = args
+                    .first()
+                    .and_then(|v| v.to_u32(ctx).ok())
+                    .unwrap_or(0);
+                let code = args
+                    .get(1)
+                    .and_then(|v| v.to_u32(ctx).ok())
+                    .unwrap_or(1000) as u16;
+                let reason = args
+                    .get(2)
+                    .and_then(|v| v.as_string())
+                    .map(|s| s.to_std_string_escaped())
+                    .unwrap_or_default();
 
-                    log::info!("[WebSocket Native] close({}, {}, {})", id, code, reason);
-                    manager.close(id, code, reason);
-                    Ok(JsValue::undefined())
-                },
-            ),
-        )
-        .expect("Failed to register __ws_close");
+                log::info!("[WebSocket Native] close({}, {}, {})", id, code, reason);
+                manager.close(id, code, reason);
+                Ok(JsValue::undefined())
+            },
+        ),
+    )?;
 
     // __ws_ready_state(id: number) -> number
-    context
-        .register_global_callable(
-            JsString::from("__ws_ready_state"),
-            1,
-            NativeFunction::from_copy_closure(
-                |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
-                    let id = args
-                        .first()
-                        .and_then(|v| v.to_u32(ctx).ok())
-                        .unwrap_or(0);
+    context.register_global_callable(
+        JsString::from("__ws_ready_state"),
+        1,
+        NativeFunction::from_copy_closure(
+            |_this: &JsValue, args: &[JsValue], ctx: &mut Context| {
+                let id = args
+                    .first()
+                    .and_then(|v| v.to_u32(ctx).ok())
+                    .unwrap_or(0);
 
-                    let state = manager.ready_state(id);
-                    Ok(JsValue::from(state))
-                },
-            ),
-        )
-        .expect("Failed to register __ws_ready_state");
+                let state = manager.ready_state(id);
+                Ok(JsValue::from(state))
+            },
+        ),
+    )?;
 
     log::info!("Registered WebSocket native functions");
+    Ok(())
 }
 
 /// Register the WebSocket JavaScript shim

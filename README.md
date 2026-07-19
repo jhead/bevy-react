@@ -27,6 +27,7 @@ Pinned to **Bevy 0.17.3** and **React 19**. See [Bevy version support](docs/BEVY
 | [Style Props](docs/STYLE_PROPS.md) | Supported CSS-like style properties |
 | [Architecture](docs/ARCHITECTURE.md) | How the two-runtime bridge works |
 | [Data Bridge](docs/BRIDGE.md) | Push ECS state into React / call Rust from JS |
+| [Boa Compat](docs/BOA_COMPAT.md) | JS APIs that work / are shimmed / missing in Boa |
 | [Examples](docs/EXAMPLES.md) | Demo, menu, forms, HUD |
 | [Demo smoke](docs/DEMO_SMOKE.md) | Manual checklist + automated smoke script |
 | [Bevy Version](docs/BEVY_VERSION.md) | Support policy + version matrix |

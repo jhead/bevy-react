@@ -37,9 +37,11 @@ export {
   callNative,
   getBridgeState,
   hostDispatchBridge,
+  hostResolveBridgeCall,
   installBridgeDispatcher,
   subscribeBridge,
   useBridgeState,
+  useResource,
 } from "./bridge";
 
 export {

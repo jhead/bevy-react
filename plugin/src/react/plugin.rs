@@ -9,6 +9,7 @@ use crate::react::ReactClient;
 use crate::react::asset_source::{
     ReactJsModule, ReactJsModuleLoader, reload_modified_react_assets, resolve_react_assets,
 };
+use crate::react::bridge::{ReactBridge, flush_react_bridge, process_react_bridge_calls};
 use crate::react::event_queue::ReactEventQueue;
 use crate::react::hmr::{ReactReloadFlag, apply_react_hmr_reloads};
 use crate::react::native_functions::ReactJsExtension;
@@ -25,6 +26,7 @@ impl Plugin for ReactPlugin {
             .init_resource::<ReactRootMap>()
             .init_resource::<FocusedNode>()
             .init_resource::<ReactEventQueue>()
+            .init_resource::<ReactBridge>()
             .init_resource::<ReactReloadFlag>()
             .add_message::<RequestReactFocus>()
             .add_message::<RequestReactBlur>()
@@ -44,6 +46,7 @@ impl Plugin for ReactPlugin {
                 Update,
                 (
                     process_react_messages,
+                    process_react_bridge_calls,
                     handle_input_interactions,
                     handle_pointer_move,
                     handle_click_outside_blur,
@@ -51,6 +54,7 @@ impl Plugin for ReactPlugin {
                     apply_focus_requests,
                     handle_keyboard_input,
                     flush_react_events,
+                    flush_react_bridge,
                     inspect,
                 ),
             );
@@ -63,11 +67,17 @@ impl Plugin for ReactPlugin {
 fn register_react_extension(
     mut commands: Commands,
     event_queue: Res<ReactEventQueue>,
+    bridge: Res<ReactBridge>,
     reload_flag: Res<ReactReloadFlag>,
 ) {
     let (client, receiver) = ReactClient::new();
 
-    let react_ext = ReactJsExtension::new(client, event_queue.clone(), reload_flag.clone());
+    let react_ext = ReactJsExtension::new(
+        client,
+        event_queue.clone(),
+        bridge.clone(),
+        reload_flag.clone(),
+    );
     commands.spawn(JsEngineExtensionComponent::new(react_ext));
     commands.insert_resource(ReactMessageReceiver(receiver));
 }

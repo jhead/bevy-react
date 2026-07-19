@@ -37,6 +37,7 @@
 pub mod plugin;
 
 mod asset_source;
+mod bridge;
 mod client;
 mod embedded;
 mod event_queue;
@@ -52,6 +53,9 @@ mod message_tests;
 
 pub use plugin::ReactPlugin;
 pub use asset_source::{ReactAssetBundle, ReactAssetSource, ReactJsModule};
+pub use bridge::{
+    BridgeCall, ReactBridge, flush_react_bridge, process_react_bridge_calls,
+};
 pub use client::*;
 pub use embedded::EmbeddedBundleSource;
 pub use event_queue::{ReactEvent, ReactEventQueue};

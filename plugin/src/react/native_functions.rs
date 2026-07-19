@@ -8,6 +8,7 @@ use serde_json::Value;
 use crate::{
     js::{JsEngineClient, JsEngineExtension},
     react::{
+        bridge::{register_bridge_functions, ReactBridge},
         event_queue::ReactEventQueue, hmr::ReactReloadFlag, ReactClient,
         shim::register_environment_shims,
     },
@@ -18,6 +19,7 @@ use crate::{
 pub struct ReactJsExtension {
     client: ReactClient,
     event_queue: ReactEventQueue,
+    bridge: ReactBridge,
     reload_flag: ReactReloadFlag,
 }
 
@@ -25,11 +27,13 @@ impl ReactJsExtension {
     pub fn new(
         client: ReactClient,
         event_queue: ReactEventQueue,
+        bridge: ReactBridge,
         reload_flag: ReactReloadFlag,
     ) -> Self {
         Self {
             client,
             event_queue,
+            bridge,
             reload_flag,
         }
     }
@@ -45,6 +49,7 @@ impl JsEngineExtension for ReactJsExtension {
             self.event_queue.clone(),
             self.reload_flag.clone(),
         )?;
+        register_bridge_functions(context, self.bridge.clone())?;
         Ok(())
     }
 }

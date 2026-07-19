@@ -17,7 +17,7 @@ Remaining structural gaps: Epic 1 multi-root checkbox still open (TS largely don
 - [x] Deep-compare props/`style` before update RPC (`commitUpdate` diffs; skip when unchanged).
 - [ ] Support multiple simultaneous roots: per-root fiber containers in TS (drop the global `fiberRoot`) and per-root instance maps.
 - [x] Handle root teardown: despawning a `ReactRoot` entity should unmount the React tree and clean `ReactRootMap`/JS state.
-- [ ] Replace `unwrap()`/`expect()` in engine and message paths (~16 sites) with logged error recovery so bad JS can't kill the thread.
+- [x] Replace `unwrap()`/`expect()` in engine and message paths (~16 sites) with logged error recovery so bad JS can't kill the thread.
 
 ## Epic 2: Style system completeness
 
@@ -33,11 +33,11 @@ Remaining structural gaps: Epic 1 multi-root checkbox still open (TS largely don
 
 - [x] Replace `eval`-based dispatch with a native event queue + registered JS callback (`ReactEventQueue` / `__react_flush_events`).
 - [x] Dispatch distinct `onPress`/`onRelease` plus click with cursor position data.
-- [x] Add keyup, key modifiers (shift/ctrl/alt), and logical `Key` (TextInput no longer uses US-layout `keyCodeToChar`).
-- [x] Add wheel/scroll events and wire `overflow: scroll` to `ScrollPosition` (lazy `ScrollPosition` insert on wheel; HoverMap + ancestor walk).
-- [x] Proper focus management: Tab/arrow navigation, click-outside blur, and Bevy `RequestReactFocus`/`RequestReactBlur` messages. (JS `__react_request_focus` bridge not wired — needs native_functions.)
-- [x] Event bubbling/propagation semantics (`stopPropagation` on bubbled click/press/release/key/wheel/scroll via `parentId` chain).
-- [ ] Gamepad/directional UI navigation (skipped for now — `bevy_input_focus` needs TabGroup/`InputFocus` integration beyond current `Focusable`/`Button` tab order).
+ - [x] Add keyup, key modifiers (shift/ctrl/alt), and logical `Key` (TextInput no longer uses US-layout `keyCodeToChar`).
+ - [x] Add wheel/scroll events and wire `overflow: scroll` to `ScrollPosition` (lazy `ScrollPosition` insert on wheel; HoverMap + ancestor walk).
+ - [x] Proper focus management: Tab/arrow navigation, click-outside blur, and Bevy `RequestReactFocus`/`RequestReactBlur` messages. (JS `__react_request_focus` bridge not wired — needs native_functions.)
+ - [x] Event bubbling/propagation semantics (`stopPropagation` on bubbled click/press/release/key/wheel/scroll via `parentId` chain).
+ - [ ] Gamepad/directional UI navigation (skipped for now — `bevy_input_focus` needs TabGroup/`InputFocus` integration beyond current `Focusable`/`Button` tab order).
 
 ## Epic 4: Built-in components
 
@@ -83,11 +83,11 @@ Remaining structural gaps: Epic 1 multi-root checkbox still open (TS largely don
 - [ ] Bevy version support policy and a tracking matrix (currently pinned to 0.17.3).
 - [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until remaining Epic 1 multi-root/teardown and Epic 3 focus/scroll land.
 
-Rough priority for remaining work: **Epic A verify/harden** (clippy, FrameJobExecutor soundness, headless destroy tests, demo smoke) → **Epic B** (finish multi-root, click-on-release, pointer-move, FocusedNode rename, scroll) → Epic 6 loading → Epic 2 styles → deepen Epic 4/3/5/7 → publish (Epic 8).
+Rough priority for remaining work: **Epic A verify/harden** (FrameJobExecutor soundness, demo smoke) → **Epic B** (finish multi-root, click-on-release, pointer-move, FocusedNode rename, scroll) → Epic 6 loading → Epic 2 styles → deepen Epic 4/3/5/7 → publish (Epic 8).
 
 ## Verification backlog (Epic A — from mid-stream review)
 
-- [ ] `cargo clippy -D warnings`, full `cargo test`, `tsc`, vitest green on every commit
+- [x] `cargo clippy -D warnings`, full `cargo test`, `tsc`, vitest green on every commit
 - [ ] FrameJobExecutor: eliminate or tightly bound `Box::leak` + `transmute` of context-borrowing futures
 - [ ] Manual demo smoke (native; wasm if feasible) for click/hover/focus/keyboard via event queue
 - [x] Headless `ReactClientProto` tests: destroy-subtree, clear-component-on-update, double-destroy idempotent (`react/message_tests.rs` + `plugin/tests/message_handling.rs`)

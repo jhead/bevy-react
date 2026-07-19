@@ -69,9 +69,10 @@ Parsers and builders live in `style.rs`. Layout-independent props are applied by
 | `zIndex` | `ZIndex` |
 | `color` | `TextColor` (text nodes) |
 | `fontSize` | `TextFont` size (text nodes) |
-| `fontFamily` | Asset path string via `parse_font_family` (generic CSS families ignored) |
+| `fontFamily` | Asset path string via `parse_font_family` → `AssetServer::load` in `apply_text_style*` (generic CSS families ignored) |
 | `textAlign` | `Justify` via `parse_text_align` (`left`/`start`, `right`/`end`, `center`, `justify`) |
 | `lineHeight` | `LineHeight` via `parse_line_height` (unitless → `RelativeToFont`, `px` → `Px`) |
+| `pointerEvents` | `"none"` → `Pickable::IGNORE` + `FocusPolicy::Pass` (HUD pass-through); `"auto"` → default blocking |
 | `opacity` | `0`–`1` or `%` via `style_opacity` (no Bevy `UiOpacity`; multiply into colors) |
 | `boxShadow` | `BoxShadow` via `parse_box_shadow` / `style_to_box_shadow` |
 | `backgroundImage` / `backgroundGradient` | `linear-gradient(...)` → `BackgroundGradient` via `style_to_background_gradient` |
@@ -83,11 +84,20 @@ Parsers and builders live in `style.rs`. Layout-independent props are applied by
 These are **parsed and typed** in `style.rs` / `BevyStyle`, and layout props already flow through `json_to_style`. Visual helpers still need `render.rs` to call them for full end-to-end effect:
 
 - Per-corner `borderRadius` / per-side `border*Color` (render still uses `BorderRadius::all` / `BorderColor::all` on the uniform props)
-- `textAlign`, `lineHeight`, `fontFamily` (asset load)
 - `opacity`, `boxShadow`, `BackgroundGradient`
 - Image `objectFit`, `tint`
 
+Wired end-to-end: `fontFamily`, `textAlign`, `lineHeight`, `pointerEvents`.
+
 `parse_color` extensions (named colors, HSL, modern `rgb`) apply immediately wherever render already calls `parse_color`.
+
+## Fonts
+
+| Topic | Detail |
+|---|---|
+| `fontFamily` | Pass a Bevy asset path such as `"fonts/FiraSans.ttf"` (file under your game's `assets/`). Generic CSS names (`sans-serif`, `monospace`, …) are ignored. |
+| Default font / tofu | With no `fontFamily` (and no default handle), Bevy uses its built-in **FiraMono subset**. Missing glyphs render as tofu (□) — e.g. Unicode minus `−`. Prefer ASCII `+/-` or a full font asset. |
+| Plugin / root default | `ReactDefaultFont` resource (or `ReactDefaultFontPlugin::new("fonts/…")`), or attach `ReactRootFont(handle)` on the root entity. Resolution order: `fontFamily` → root font → plugin default → Bevy subset. |
 
 ## Known limitations
 
@@ -97,4 +107,5 @@ These are **parsed and typed** in `style.rs` / `BevyStyle`, and layout props alr
 | `opacity` | No dedicated Bevy UI opacity component in 0.17 |
 | Grid `minmax()` / `auto-fill` | Not fully parsed; `repeat(N, track)` integer repeats work |
 | Atlas / nine-slice | Not exposed yet |
-| Text shadow / line-break | Not implemented |
+| Text shadow / line-break | Parsed; confirm render coverage if you rely on them |
+| `pointerEvents` | Per-node only (like CSS with explicit `auto` on children). Full-screen HUD: set `"none"` on the transparent overlay; keep `"auto"` / default on interactive widgets. |

@@ -159,7 +159,7 @@ cd packages/bevy-react && pnpm build
 |---|---|---|
 | `Node` | Bevy `Node` | Layout container |
 | `Button` | Bevy `Button` | `onClick`, hover enter/leave; `onPress` / `onRelease` declared but not fired yet |
-| `Text` | Bevy `Text` | `fontSize`, `color`; `fontFamily` not supported |
+| `Text` | Bevy `Text` | `fontSize`, `color`, `fontFamily` (asset path); see [STYLE_PROPS.md](STYLE_PROPS.md#fonts) for default-font tofu |
 | `Image` | Bevy `ImageNode` | Requires `src` |
 | `TextInput` | Focusable input host | Early / limited |
 

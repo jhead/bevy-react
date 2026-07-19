@@ -6,7 +6,7 @@ Living roadmap for bevy-react. Items marked `[x]` landed on `main` (verify + ite
 
 The core architecture is sound and works end-to-end: Boa runs React on a worker thread (native) or main thread (WASM), a custom reconciler ships mutations over an RPC enum, and Bevy systems materialize entities. Early prototype status remains accurate for production use, but several structural blockers are closed: entity destroy on unmount, native structured event dispatch (no eval), WASM budgeted job pump (`ContextGate`, no leak/future-transmute), multi-root TS containers + instance maps, root teardown on `ReactRoot` despawn, borderWidth sync, and basic CI/tests/docs.
 
-Remaining gaps: full React/Vite counter bundle e2e still open (Boa host-API smoke in `plugin/tests/boa_smoke.rs` covers entity tree + synthesized click). Texture atlas indexing still TODO. A minimal Rust↔React data bridge (`ReactBridge` / [BRIDGE.md](BRIDGE.md)) powers the HUD example.
+Remaining gaps: full React/Vite counter bundle e2e still open (Boa host-API smoke in `plugin/tests/boa_smoke.rs` covers entity tree + synthesized click). Texture atlas indexing still TODO. A minimal Rust↔React data bridge (`ReactBridge` / [BRIDGE.md](BRIDGE.md)) powers the HUD example. Consumer polish landed: `fontFamily` asset paths + optional default font handles, and `pointerEvents` pass-through for transparent HUD roots.
 
 ## Epic 1: Correctness of the render pipeline
 
@@ -25,7 +25,8 @@ Remaining gaps: full React/Vite counter bundle e2e still open (Boa host-API smok
 - [x] Support 4-value/2-value shorthands for `margin`/`padding`/`borderRadius` ("8px 16px").
 - [x] Extend `parse_color`: full CSS named-color table, `hsl()/hsla()`, and shorthand `rgb(0 0 0 / 0.5)` syntax.
 - [x] Per-corner border radius and per-side border colors.
-- [x] Text styling: `fontFamily` via Bevy font assets, `textAlign`/`JustifyText`, `lineHeight`, `lineBreak` → `TextLayout`, and `textShadow` → `TextShadow` wired in `apply_text_style*`.
+- [x] Text styling: `fontFamily` via Bevy font assets, `textAlign`/`JustifyText`, `lineHeight`, `lineBreak` → `TextLayout`, and `textShadow` → `TextShadow` wired in `apply_text_style*`. Optional `ReactDefaultFont` / `ReactRootFont` when `fontFamily` is unset (Bevy subset tofu documented).
+- [x] `pointerEvents: "none" | "auto"` → `Pickable` + `FocusPolicy` so full-screen transparent HUD roots pass clicks to the world.
 - [x] Add `opacity`, `boxShadow`, and `BackgroundGradient` support (Bevy 0.17 has these). Wired in `apply_visual_style*`; opacity multiplies into colors (no Bevy `UiOpacity`).
 - [x] Image props: `objectFit` (ImageNode scale modes), tint color, and nine-slice via `imageSlice` (`NodeImageMode::Sliced`). (Texture atlas indexing still TODO.)
 
@@ -86,6 +87,11 @@ Remaining gaps: full React/Vite counter bundle e2e still open (Boa host-API smok
 - [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until publish.
 
 Rough priority for remaining work: Epic 2 atlas indexing leftovers → optional criterion micro-bench → publish. Epic A interactive checklist: [DEMO_SMOKE.md](DEMO_SMOKE.md).
+
+### Consumer blockers (closed)
+
+- [x] Font control: `fontFamily` asset paths end-to-end; default FiraMono-subset tofu documented; optional `ReactDefaultFont` / `ReactRootFont`; Slider step labels use ASCII `+/-`.
+- [x] Pointer pass-through: `pointerEvents` style → Bevy picking/`FocusPolicy` for HUD-over-world clicks.
 
 ## Verification backlog (Epic A — from mid-stream review)
 

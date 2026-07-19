@@ -1,6 +1,7 @@
 use bevy::prelude::*;
-use bevy::text::{Justify, LineHeight};
-use bevy::ui::widget::NodeImageMode;
+use bevy::sprite::{BorderRect, TextureSlicer};
+use bevy::text::{Justify, LineBreak, LineHeight, TextLayout};
+use bevy::ui::widget::{NodeImageMode, TextShadow};
 use bevy::ui::{
     AlignContent, AlignItems, AlignSelf, BackgroundGradient, BorderColor, BorderRadius, BoxShadow,
     ColorStop, Display, FlexDirection, FlexWrap, Gradient, GridAutoFlow, GridPlacement, GridTrack,
@@ -178,9 +179,15 @@ pub struct StyleProps {
     pub font_family: Option<String>,
     pub text_align: Option<String>,
     pub line_height: Option<CssScalar>,
+    /// Soft wrap mode: `word` / `character` / `word-or-character` / `nowrap`.
+    pub line_break: Option<String>,
+    /// CSS-like `offset-x offset-y [blur] [color]` (blur ignored; Bevy has no text blur).
+    pub text_shadow: Option<String>,
 
     // Image
     pub object_fit: Option<String>,
+    /// Nine-slice border in px: `"16"` or `"top right bottom left"` / CSS 1–4 values.
+    pub image_slice: Option<String>,
     pub tint: Option<String>,
     pub tint_color: Option<String>,
 }
@@ -524,6 +531,92 @@ pub fn style_text_align(props: &StyleProps) -> Option<Justify> {
     props.text_align.as_deref().and_then(parse_text_align)
 }
 
+/// Parse line-break / white-space keywords into Bevy [`LineBreak`].
+pub fn parse_line_break(value: &str) -> Option<LineBreak> {
+    match value.trim().to_lowercase().as_str() {
+        "word" | "word-boundary" | "wordboundary" | "normal" => Some(LineBreak::WordBoundary),
+        "character" | "any-character" | "anycharacter" | "anywhere" | "break-all" => {
+            Some(LineBreak::AnyCharacter)
+        }
+        "word-or-character" | "wordorcharacter" | "break-word" => {
+            Some(LineBreak::WordOrCharacter)
+        }
+        "nowrap" | "no-wrap" | "none" => Some(LineBreak::NoWrap),
+        _ => None,
+    }
+}
+
+pub fn style_line_break(props: &StyleProps) -> Option<LineBreak> {
+    props.line_break.as_deref().and_then(parse_line_break)
+}
+
+/// Combine `textAlign` + `lineBreak` into a single [`TextLayout`] when either is set.
+pub fn style_text_layout(props: &StyleProps) -> Option<TextLayout> {
+    let justify = style_text_align(props);
+    let linebreak = style_line_break(props);
+    match (justify, linebreak) {
+        (None, None) => None,
+        (Some(j), Some(lb)) => Some(TextLayout::new(j, lb)),
+        (Some(j), None) => Some(TextLayout::new_with_justify(j)),
+        (None, Some(lb)) => Some(TextLayout::new_with_linebreak(lb)),
+    }
+}
+
+/// Parse CSS-like `text-shadow`: `offset-x offset-y [blur] [color]`.
+/// Blur is accepted and ignored (Bevy [`TextShadow`] has no blur radius).
+pub fn parse_text_shadow(value: &str) -> Option<TextShadow> {
+    let value = value.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("none") {
+        return None;
+    }
+
+    let tokens: Vec<&str> = value.split_whitespace().collect();
+    let mut lengths: Vec<f32> = Vec::new();
+    let mut color = Color::linear_rgba(0.0, 0.0, 0.0, 0.75);
+
+    for token in tokens {
+        let lower = token.to_lowercase();
+        if lower.starts_with('#')
+            || lower.starts_with("rgb")
+            || lower.starts_with("hsl")
+            || named_color(&lower).is_some()
+        {
+            if let Some(c) = parse_color(token) {
+                color = c;
+            }
+        } else if let Some(px) = length_to_px(token) {
+            lengths.push(px);
+        }
+    }
+
+    if lengths.is_empty() {
+        return None;
+    }
+
+    Some(TextShadow {
+        offset: Vec2::new(
+            lengths.first().copied().unwrap_or(0.0),
+            lengths.get(1).copied().unwrap_or(0.0),
+        ),
+        color,
+    })
+}
+
+pub fn style_text_shadow(props: &StyleProps) -> Option<TextShadow> {
+    props.text_shadow.as_deref().and_then(parse_text_shadow)
+}
+
+fn length_to_px(token: &str) -> Option<f32> {
+    let token = token.trim();
+    if let Some(px) = token.strip_suffix("px") {
+        return px.trim().parse().ok();
+    }
+    if token.ends_with('%') || token.eq_ignore_ascii_case("auto") {
+        return None;
+    }
+    token.parse().ok()
+}
+
 /// Parse line-height: unitless → RelativeToFont, px/% → Px / RelativeToFont.
 pub fn parse_line_height(value: &str) -> Option<LineHeight> {
     let value = value.trim();
@@ -577,6 +670,48 @@ pub fn parse_object_fit(value: &str) -> NodeImageMode {
 
 pub fn style_object_fit(props: &StyleProps) -> Option<NodeImageMode> {
     props.object_fit.as_deref().map(parse_object_fit)
+}
+
+/// Parse nine-slice border insets: `"16"` or up to four px lengths (CSS TRBL order).
+pub fn parse_image_slice(value: &str) -> Option<NodeImageMode> {
+    let parts: Vec<f32> = value
+        .split_whitespace()
+        .filter_map(length_to_px)
+        .collect();
+    let border = match parts.as_slice() {
+        [all] => BorderRect::all(*all),
+        [v, h] => BorderRect {
+            top: *v,
+            bottom: *v,
+            left: *h,
+            right: *h,
+        },
+        [t, h, b] => BorderRect {
+            top: *t,
+            right: *h,
+            bottom: *b,
+            left: *h,
+        },
+        [t, r, b, l] => BorderRect {
+            top: *t,
+            right: *r,
+            bottom: *b,
+            left: *l,
+        },
+        _ => return None,
+    };
+    Some(NodeImageMode::Sliced(TextureSlicer {
+        border,
+        ..Default::default()
+    }))
+}
+
+/// Resolve image mode: `imageSlice` wins when set, otherwise `objectFit`.
+pub fn style_image_mode(props: &StyleProps) -> Option<NodeImageMode> {
+    if let Some(slice) = props.image_slice.as_deref().and_then(parse_image_slice) {
+        return Some(slice);
+    }
+    style_object_fit(props)
 }
 
 pub fn style_tint(props: &StyleProps) -> Option<Color> {
@@ -1648,6 +1783,9 @@ mod tests {
         assert_eq!(parse_val("auto"), Val::Auto);
         assert_eq!(parse_val("10vw"), Val::Vw(10.0));
         assert_eq!(parse_val("20vh"), Val::Vh(20.0));
+        assert_eq!(parse_val("42"), Val::Px(42.0));
+        assert_eq!(parse_val("  8px  "), Val::Px(8.0));
+        assert_eq!(parse_val("not-a-length"), Val::Auto);
     }
 
     #[test]
@@ -1655,10 +1793,23 @@ mod tests {
         assert!(parse_color("red").is_some());
         assert!(parse_color("rebeccapurple").is_some());
         assert!(parse_color("cornflowerblue").is_some());
+        assert_eq!(parse_color("transparent"), Some(Color::NONE));
         assert!(parse_color("#ff0000").is_some());
         assert!(parse_color("#f00").is_some());
         assert!(parse_color("rgb(255, 0, 0)").is_some());
         assert!(parse_color("rgba(255, 0, 0, 0.5)").is_some());
+        assert!(parse_color("not-a-color").is_none());
+    }
+
+    #[test]
+    fn test_parse_color_hex_alpha() {
+        let short = parse_color("#f008").unwrap().to_srgba();
+        assert!((short.red - 1.0).abs() < 0.01);
+        assert!((short.alpha - 0x88 as f32 / 255.0).abs() < 0.01);
+
+        let long = parse_color("#00ff0080").unwrap().to_srgba();
+        assert!(long.green > 0.99);
+        assert!((long.alpha - 0x80 as f32 / 255.0).abs() < 0.01);
     }
 
     #[test]
@@ -1672,6 +1823,10 @@ mod tests {
         let s2 = c2.to_srgba();
         assert!((s2.red - 1.0).abs() < 0.01);
         assert!((s2.green - 128.0 / 255.0).abs() < 0.01);
+
+        let pct = parse_color("rgb(100% 0% 0% / 50%)").unwrap().to_srgba();
+        assert!((pct.red - 1.0).abs() < 0.01);
+        assert!((pct.alpha - 0.5).abs() < 0.01);
     }
 
     #[test]
@@ -1686,6 +1841,10 @@ mod tests {
         let ms = modern.to_srgba();
         assert!(ms.green > 0.9);
         assert!((ms.alpha - 0.5).abs() < 0.01);
+
+        let deg = parse_color("hsl(240deg 100% 50%)").unwrap().to_srgba();
+        assert!(deg.blue > 0.9);
+        assert!(deg.red < 0.02);
     }
 
     #[test]
@@ -1698,6 +1857,15 @@ mod tests {
         let props_border: StyleProps = serde_json::from_str(r#"{"border": 4}"#).unwrap();
         let style_border = json_to_style(&props_border);
         assert_eq!(style_border.border.left, Val::Px(4.0));
+
+        let per_side: StyleProps = serde_json::from_str(
+            r#"{"borderWidth": "2px", "borderTop": "8px", "borderLeft": "1px"}"#,
+        )
+        .unwrap();
+        let side = json_to_style(&per_side);
+        assert_eq!(side.border.top, Val::Px(8.0));
+        assert_eq!(side.border.left, Val::Px(1.0));
+        assert_eq!(side.border.right, Val::Px(2.0));
     }
 
     #[test]
@@ -1714,6 +1882,30 @@ mod tests {
         assert_eq!(style.padding.right, Val::Px(2.0));
         assert_eq!(style.padding.bottom, Val::Px(3.0));
         assert_eq!(style.padding.left, Val::Px(4.0));
+    }
+
+    #[test]
+    fn test_margin_padding_one_and_three_value() {
+        let one: StyleProps = serde_json::from_str(r#"{"margin": "12px"}"#).unwrap();
+        let style = json_to_style(&one);
+        assert_eq!(style.margin, UiRect::all(Val::Px(12.0)));
+
+        let three: StyleProps =
+            serde_json::from_str(r#"{"padding": "1px 2px 3px"}"#).unwrap();
+        let style = json_to_style(&three);
+        assert_eq!(style.padding.top, Val::Px(1.0));
+        assert_eq!(style.padding.right, Val::Px(2.0));
+        assert_eq!(style.padding.bottom, Val::Px(3.0));
+        assert_eq!(style.padding.left, Val::Px(2.0));
+
+        let override_sides: StyleProps = serde_json::from_str(
+            r#"{"margin": "4px", "marginTop": "10px", "marginLeft": "20px"}"#,
+        )
+        .unwrap();
+        let style = json_to_style(&override_sides);
+        assert_eq!(style.margin.top, Val::Px(10.0));
+        assert_eq!(style.margin.left, Val::Px(20.0));
+        assert_eq!(style.margin.right, Val::Px(4.0));
     }
 
     #[test]
@@ -1736,6 +1928,15 @@ mod tests {
             bevy::ui::OverflowClipBox::ContentBox
         );
         assert!((style.overflow_clip_margin.margin - 4.0).abs() < 0.001);
+
+        let numeric: StyleProps = serde_json::from_str(r#"{"aspectRatio": 1.5}"#).unwrap();
+        assert!((json_to_style(&numeric).aspect_ratio.unwrap() - 1.5).abs() < 0.001);
+
+        let shorthand: StyleProps =
+            serde_json::from_str(r#"{"overflow": "hidden"}"#).unwrap();
+        let style = json_to_style(&shorthand);
+        assert_eq!(style.overflow.x, OverflowAxis::Clip);
+        assert_eq!(style.overflow.y, OverflowAxis::Clip);
     }
 
     #[test]
@@ -1756,6 +1957,47 @@ mod tests {
         assert_eq!(style.grid_template_columns.len(), 3);
         assert_eq!(style.grid_template_rows.len(), 2);
         assert_eq!(style.grid_auto_flow, GridAutoFlow::RowDense);
+        assert_eq!(style.grid_column, GridPlacement::start_span(1, 2));
+        assert_eq!(style.grid_row, GridPlacement::start_end(2, 4));
+    }
+
+    #[test]
+    fn test_grid_tracks_fit_content_and_auto() {
+        let cols = parse_grid_template("fit-content(120px) min-content max-content 25%");
+        assert_eq!(cols.len(), 4);
+
+        let auto_tracks: StyleProps = serde_json::from_str(
+            r#"{
+                "gridAutoColumns": "1fr 40px auto",
+                "gridAutoRows": "min-content",
+                "gridAutoFlow": "column dense"
+            }"#,
+        )
+        .unwrap();
+        let style = json_to_style(&auto_tracks);
+        assert_eq!(style.grid_auto_columns.len(), 3);
+        assert_eq!(style.grid_auto_rows.len(), 1);
+        assert_eq!(style.grid_auto_flow, GridAutoFlow::ColumnDense);
+
+        assert_eq!(parse_grid_placement("span 3"), GridPlacement::span(3));
+        assert_eq!(parse_grid_placement("auto"), GridPlacement::auto());
+        assert_eq!(parse_grid_placement("5"), GridPlacement::start(5));
+    }
+
+    #[test]
+    fn test_grid_line_start_end_props() {
+        let props: StyleProps = serde_json::from_str(
+            r#"{
+                "gridColumnStart": 2,
+                "gridColumnEnd": 5,
+                "gridRowStart": 1,
+                "gridRowEnd": 3
+            }"#,
+        )
+        .unwrap();
+        let style = json_to_style(&props);
+        assert_eq!(style.grid_column, GridPlacement::start_end(2, 5));
+        assert_eq!(style.grid_row, GridPlacement::start_end(1, 3));
     }
 
     #[test]
@@ -1772,6 +2014,15 @@ mod tests {
         assert_eq!(radius.top_right, Val::Px(16.0));
         assert_eq!(radius.bottom_right, Val::Px(8.0));
         assert_eq!(radius.bottom_left, Val::Px(16.0));
+
+        let four = parse_border_radius_shorthand("1px 2px 3px 4px");
+        assert_eq!(four.top_left, Val::Px(1.0));
+        assert_eq!(four.top_right, Val::Px(2.0));
+        assert_eq!(four.bottom_right, Val::Px(3.0));
+        assert_eq!(four.bottom_left, Val::Px(4.0));
+
+        let one = parse_border_radius_shorthand("9px");
+        assert_eq!(one, BorderRadius::all(Val::Px(9.0)));
     }
 
     #[test]
@@ -1786,6 +2037,21 @@ mod tests {
         let color = style_to_border_color(&props).unwrap();
         assert_eq!(color.top, parse_color("blue").unwrap());
         assert_eq!(color.left, parse_color("red").unwrap());
+
+        let all_sides: StyleProps = serde_json::from_str(
+            r#"{
+                "borderTopColor": "red",
+                "borderRightColor": "green",
+                "borderBottomColor": "blue",
+                "borderLeftColor": "yellow"
+            }"#,
+        )
+        .unwrap();
+        let color = style_to_border_color(&all_sides).unwrap();
+        assert_eq!(color.top, parse_color("red").unwrap());
+        assert_eq!(color.right, parse_color("green").unwrap());
+        assert_eq!(color.bottom, parse_color("blue").unwrap());
+        assert_eq!(color.left, parse_color("yellow").unwrap());
     }
 
     #[test]
@@ -1802,6 +2068,7 @@ mod tests {
         assert_eq!(shadow.0[0].x_offset, Val::Px(2.0));
         assert_eq!(shadow.0[0].y_offset, Val::Px(4.0));
         assert_eq!(shadow.0[0].blur_radius, Val::Px(8.0));
+        assert_eq!(shadow.0[0].spread_radius, Val::Px(0.0));
 
         let grad = style_to_background_gradient(&props).unwrap();
         assert_eq!(grad.0.len(), 1);
@@ -1814,6 +2081,86 @@ mod tests {
     }
 
     #[test]
+    fn test_multi_layer_shadow_and_gradient_stops() {
+        let multi = parse_box_shadow(
+            "1px 2px 3px red, 4px 5px 6px 7px rgba(0, 0, 0, 0.25)",
+        )
+        .unwrap();
+        assert_eq!(multi.0.len(), 2);
+        assert_eq!(multi.0[0].x_offset, Val::Px(1.0));
+        assert_eq!(multi.0[1].spread_radius, Val::Px(7.0));
+        assert!(parse_box_shadow("none").is_none());
+
+        let stops = parse_background_gradient(
+            "linear-gradient(45deg, red 0%, blue 50%, green 100%)",
+        )
+        .unwrap();
+        assert_eq!(stops.0.len(), 1);
+        if let Gradient::Linear(linear) = &stops.0[0] {
+            assert_eq!(linear.stops.len(), 3);
+            assert!((linear.angle - 45f32.to_radians()).abs() < 0.001);
+        } else {
+            panic!("expected linear gradient");
+        }
+
+        let corner = parse_background_gradient("linear-gradient(to top left, white, black)");
+        assert!(corner.is_some());
+        assert!(parse_background_gradient("radial-gradient(circle, red, blue)").is_none());
+    }
+
+    #[test]
+    fn test_flex_gap_and_position() {
+        let props: StyleProps = serde_json::from_str(
+            r#"{
+                "display": "flex",
+                "flexDirection": "row-reverse",
+                "flexWrap": "wrap",
+                "flexGrow": 1,
+                "flexShrink": 0,
+                "flexBasis": "50%",
+                "alignItems": "center",
+                "justifyContent": "space-between",
+                "gap": "8px 16px",
+                "position": "absolute",
+                "top": "10px",
+                "left": "20px",
+                "width": 100,
+                "height": "50%"
+            }"#,
+        )
+        .unwrap();
+        let style = json_to_style(&props);
+        assert_eq!(style.display, Display::Flex);
+        assert_eq!(style.flex_direction, FlexDirection::RowReverse);
+        assert_eq!(style.flex_wrap, FlexWrap::Wrap);
+        assert_eq!(style.flex_grow, 1.0);
+        assert_eq!(style.flex_shrink, 0.0);
+        assert_eq!(style.flex_basis, Val::Percent(50.0));
+        assert_eq!(style.align_items, AlignItems::Center);
+        assert_eq!(style.justify_content, JustifyContent::SpaceBetween);
+        assert_eq!(style.row_gap, Val::Px(8.0));
+        assert_eq!(style.column_gap, Val::Px(16.0));
+        assert_eq!(style.position_type, PositionType::Absolute);
+        assert_eq!(style.top, Val::Px(10.0));
+        assert_eq!(style.left, Val::Px(20.0));
+        assert_eq!(style.width, Val::Px(100.0));
+        assert_eq!(style.height, Val::Percent(50.0));
+    }
+
+    #[test]
+    fn test_parse_props_and_css_value_numbers() {
+        let node = parse_props(r#"{"content":"hi","style":{"width":24,"opacity":0.25}}"#);
+        assert_eq!(node.content.as_deref(), Some("hi"));
+        let style = node.style.unwrap();
+        assert_eq!(style.width.as_ref().unwrap().0, "24px");
+        assert_eq!(style.opacity.as_ref().unwrap().0, "0.25");
+
+        let bad = parse_props("not-json");
+        assert!(bad.style.is_none());
+        assert!(bad.content.is_none());
+    }
+
+    #[test]
     fn test_text_and_image_helpers() {
         let props: StyleProps = serde_json::from_str(
             r##"{
@@ -1822,18 +2169,34 @@ mod tests {
                 "opacity": 0.5,
                 "textAlign": "center",
                 "lineHeight": 1.5,
+                "lineBreak": "nowrap",
+                "textShadow": "2px 3px 0 black",
                 "fontFamily": "fonts/FiraSans.ttf",
-                "objectFit": "fill"
+                "objectFit": "fill",
+                "imageSlice": "16"
             }"##,
         )
         .unwrap();
 
         assert_eq!(style_text_align(&props), Some(Justify::Center));
+        assert_eq!(style_line_break(&props), Some(LineBreak::NoWrap));
+        let layout = style_text_layout(&props).unwrap();
+        assert_eq!(layout.justify, Justify::Center);
+        assert_eq!(layout.linebreak, LineBreak::NoWrap);
+        let shadow = style_text_shadow(&props).unwrap();
+        assert_eq!(shadow.offset, Vec2::new(2.0, 3.0));
         assert_eq!(
             style_line_height(&props),
             Some(LineHeight::RelativeToFont(1.5))
         );
         assert_eq!(parse_line_height("24px"), Some(LineHeight::Px(24.0)));
+        assert_eq!(
+            parse_line_height("150%"),
+            Some(LineHeight::RelativeToFont(1.5))
+        );
+        assert_eq!(parse_text_align("justify"), Some(Justify::Justified));
+        assert_eq!(parse_text_align("start"), Some(Justify::Left));
+        assert_eq!(parse_line_break("break-all"), Some(LineBreak::AnyCharacter));
         assert_eq!(
             style_font_family(&props).as_deref(),
             Some("fonts/FiraSans.ttf")
@@ -1841,10 +2204,19 @@ mod tests {
         assert!(parse_font_family("sans-serif").is_none());
         assert_eq!(style_object_fit(&props), Some(NodeImageMode::Stretch));
         assert_eq!(parse_object_fit("contain"), NodeImageMode::Auto);
+        assert!(matches!(
+            style_image_mode(&props),
+            Some(NodeImageMode::Sliced(_))
+        ));
+        assert!(matches!(
+            parse_image_slice("8 16"),
+            Some(NodeImageMode::Sliced(_))
+        ));
         assert!(style_tint(&props).is_some());
         let tint_only: StyleProps =
             serde_json::from_str(r#"{"tintColor": "lime"}"#).unwrap();
         assert!(style_tint(&tint_only).is_some());
         assert!((style_opacity(&props).unwrap() - 0.5).abs() < 0.001);
+        assert_eq!(parse_opacity("75%"), Some(0.75));
     }
 }

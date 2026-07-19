@@ -34,10 +34,17 @@ cargo run --manifest-path examples/forms/Cargo.toml
 
 See [examples/forms/README.md](../examples/forms/README.md).
 
+### HUD (`examples/hud/`)
+
+Game-state binding via [`ReactBridge`](BRIDGE.md): Rust ticks HP/score and publishes on a channel; React reads with `useBridgeState` and can call `add_score` through `callNative`.
+
+```bash
+cd examples/hud/ui && pnpm install --ignore-scripts && pnpm dev
+cargo run --manifest-path examples/hud/Cargo.toml
+```
+
+See [examples/hud/README.md](../examples/hud/README.md).
+
 ## Planned
 
-Additional examples are tracked under Epic 8 in [PROJECT_PLAN.md](PROJECT_PLAN.md):
-
-| Example | Goal |
-|---|---|
-| HUD + game state | Bind Bevy ECS / game state into React (once a data bridge exists) |
+Additional examples are tracked under Epic 8 in [PROJECT_PLAN.md](PROJECT_PLAN.md).

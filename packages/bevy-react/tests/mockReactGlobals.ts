@@ -29,24 +29,34 @@ export type ReactCall =
 export interface MockReactGlobals {
   calls: ReactCall[];
   nextId: number;
+  /** Node IDs still considered live (create − successful destroy). */
+  liveIds: Set<number>;
+  /** nodeId → how many times destroy was invoked (including no-ops). */
+  destroyCounts: Map<number, number>;
   reset: () => void;
   ops: () => string[];
+  /** Destroy calls where the node was already gone (idempotent second path). */
+  duplicateDestroys: () => number[];
 }
 
 export function installMockReactGlobals(): MockReactGlobals {
   const calls: ReactCall[] = [];
+  const liveIds = new Set<number>();
+  const destroyCounts = new Map<number, number>();
   let nextId = 1;
 
   const g = globalThis as typeof globalThis & Record<string, unknown>;
 
   g.__react_create_node = (rootId: string, type: string, propsJson: string) => {
     const nodeId = nextId++;
+    liveIds.add(nodeId);
     calls.push({ op: "create_node", rootId, type, propsJson, nodeId });
     return nodeId;
   };
 
   g.__react_create_text = (rootId: string, content: string) => {
     const nodeId = nextId++;
+    liveIds.add(nodeId);
     calls.push({ op: "create_text", rootId, content, nodeId });
     return nodeId;
   };
@@ -93,6 +103,10 @@ export function installMockReactGlobals(): MockReactGlobals {
   };
 
   g.__react_destroy_node = (rootId: string, nodeId: number) => {
+    // Idempotent: removeChild and detachDeletedInstance both call destroy.
+    const count = (destroyCounts.get(nodeId) ?? 0) + 1;
+    destroyCounts.set(nodeId, count);
+    liveIds.delete(nodeId);
     calls.push({ op: "destroy_node", rootId, nodeId });
   };
 
@@ -102,6 +116,8 @@ export function installMockReactGlobals(): MockReactGlobals {
 
   return {
     calls,
+    liveIds,
+    destroyCounts,
     get nextId() {
       return nextId;
     },
@@ -109,11 +125,19 @@ export function installMockReactGlobals(): MockReactGlobals {
       nextId = value;
     },
     reset() {
+      // Keep nextId monotonic so mid-session updates don't collide with
+      // still-mounted fiber node IDs after clearing the call log.
       calls.length = 0;
-      nextId = 1;
+      liveIds.clear();
+      destroyCounts.clear();
     },
     ops() {
       return calls.map((c) => c.op);
+    },
+    duplicateDestroys() {
+      return [...destroyCounts.entries()]
+        .filter(([, n]) => n > 1)
+        .map(([id]) => id);
     },
   };
 }

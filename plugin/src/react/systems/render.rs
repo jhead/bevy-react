@@ -19,7 +19,7 @@ pub fn process_react_messages(
 
     // Process all pending messages
     while let Some(message) = receiver.0.try_recv() {
-        log::info!("Processing React message: {:?}", message);
+        log::trace!("Processing React message: {:?}", message);
         match message {
             ReactClientProto::CreateNode {
                 root_id,
@@ -64,7 +64,7 @@ pub fn process_react_messages(
                 parent_id,
                 child_id,
             } => {
-                log::info!(
+                log::debug!(
                     "Appending child: root_id={}, parent_id={}, child_id={}",
                     root_id,
                     parent_id,
@@ -181,12 +181,12 @@ pub fn process_react_messages(
                     continue;
                 };
 
-                log::info!("Clearing container: {}", root_id);
+                log::debug!("Clearing container: {}", root_id);
                 handle_clear_container(&mut commands, &mut context);
             }
 
             ReactClientProto::Complete => {
-                log::info!("React batch complete");
+                log::trace!("React batch complete");
             }
         }
     }
@@ -207,8 +207,7 @@ fn handle_create_node(
     let mut entity_commands = match node_type {
         "bevy-button" => {
             // Button node
-            let cmd = commands.spawn((Button, style, ReactNode { node_id }));
-            cmd
+            commands.spawn((Button, style, ReactNode { node_id }))
         }
 
         "bevy-image" => {
@@ -234,10 +233,10 @@ fn handle_create_node(
             // Apply text styling
             if let Some(ref style_props) = props.style {
                 // Apply text color via TextColor component
-                if let Some(ref color_str) = style_props.color {
-                    if let Some(color) = parse_color(color_str) {
-                        cmd.insert(TextColor(color));
-                    }
+                if let Some(ref color_str) = style_props.color
+                    && let Some(color) = parse_color(color_str)
+                {
+                    cmd.insert(TextColor(color));
                 }
                 // Apply font size via TextFont component
                 if let Some(ref font_size) = style_props.font_size {
@@ -271,41 +270,41 @@ fn handle_create_node(
     entity_commands.insert(Interaction::default());
 
     // Apply visual components (common for non-text nodes)
-    if node_type != "bevy-text" {
-        if let Some(ref style_props) = props.style {
-            if let Some(ref bg) = style_props.background_color {
-                if let Some(color) = parse_color(bg) {
-                    entity_commands.insert(BackgroundColor(color));
-                }
-            }
-            if let Some(ref bc) = style_props.border_color {
-                if let Some(color) = parse_color(bc) {
-                    entity_commands.insert(BorderColor::all(color));
-                }
-            }
-            if let Some(ref br) = style_props.border_radius {
-                let val = parse_val(&br.0);
-                entity_commands.insert(BorderRadius::all(val));
-            }
-            if let Some(ref d) = style_props.display {
-                if d.to_lowercase() == "none" {
-                    entity_commands.insert(Visibility::Hidden);
-                }
-            }
+    if node_type != "bevy-text"
+        && let Some(ref style_props) = props.style
+    {
+        if let Some(ref bg) = style_props.background_color
+            && let Some(color) = parse_color(bg)
+        {
+            entity_commands.insert(BackgroundColor(color));
+        }
+        if let Some(ref bc) = style_props.border_color
+            && let Some(color) = parse_color(bc)
+        {
+            entity_commands.insert(BorderColor::all(color));
+        }
+        if let Some(ref br) = style_props.border_radius {
+            let val = parse_val(&br.0);
+            entity_commands.insert(BorderRadius::all(val));
+        }
+        if let Some(ref d) = style_props.display
+            && d.to_lowercase() == "none"
+        {
+            entity_commands.insert(Visibility::Hidden);
         }
     }
 
     // Apply ZIndex if specified
-    if let Some(ref style_props) = props.style {
-        if let Some(z) = style_props.z_index {
-            entity_commands.insert(ZIndex(z));
-        }
+    if let Some(ref style_props) = props.style
+        && let Some(z) = style_props.z_index
+    {
+        entity_commands.insert(ZIndex(z));
     }
 
     context.nodes.insert(node_id, entity_commands.id());
     let entity = entity_commands.id(); // capture id for logging
 
-    log::info!(
+    log::debug!(
         "Created {} node: id={} entity={:?}",
         node_type,
         node_id,
@@ -329,7 +328,7 @@ fn handle_create_text(
         .id();
 
     context.nodes.insert(node_id, entity);
-    log::info!("Created text node: id={} entity={:?} text={}", node_id, entity, content);
+    log::debug!("Created text node: id={} entity={:?} text={}", node_id, entity, content);
 }
 
 /// Append a child to a parent
@@ -351,7 +350,7 @@ fn handle_append_child(
     match (parent_entity, child_entity) {
         (Some(parent), Some(child)) => {
             commands.entity(parent).add_child(child);
-            log::info!(
+            log::debug!(
                 "Appended child: parent={:?} child={:?}",
                 parent_id,
                 child_id
@@ -378,7 +377,7 @@ fn handle_remove_child(
 
     if let Some(child) = child_entity {
         commands.entity(child).remove_parent_in_place();
-        log::info!("Removed child: parent={} child={:?}", parent_id, child_id);
+        log::debug!("Removed child: parent={} child={:?}", parent_id, child_id);
     } else {
         log::warn!(
             "Failed to remove child: child_id={} (entity not found)",
@@ -434,7 +433,7 @@ fn handle_update_node(
                 commands.entity(entity).remove::<TextFont>();
             }
         }
-        log::info!("Updated text node: id={}", node_id);
+        log::debug!("Updated text node: id={}", node_id);
         return;
     }
 
@@ -511,7 +510,7 @@ fn handle_update_node(
         commands.entity(entity).insert(ImageNode::new(image_handle));
     }
 
-    log::info!("Updated node: id={}", node_id);
+    log::debug!("Updated node: id={}", node_id);
 }
 
 /// Update text content
@@ -529,7 +528,7 @@ fn handle_update_text(
     commands
         .entity(entity)
         .insert(Text::new(content.to_string()));
-    log::info!("Updated text: id={} content={}", node_id, content);
+    log::debug!("Updated text: id={} content={}", node_id, content);
 }
 
 /// Destroy a node and its descendants, purging ReactContext maps
@@ -558,7 +557,7 @@ fn handle_destroy_node(
             world.entity_mut(entity).despawn();
         }
 
-        log::info!(
+        log::debug!(
             "Destroyed node: id={} entity={:?} (subtree size={})",
             node_id,
             entity,
@@ -612,7 +611,7 @@ fn handle_insert_before(
 
                 world.entity_mut(parent).insert_children(index, &[child]);
             });
-            log::info!(
+            log::debug!(
                 "Inserted child {} before {} in parent {}",
                 child_id,
                 before_id,
@@ -635,5 +634,5 @@ fn handle_clear_container(commands: &mut Commands, context: &mut ReactContext) {
     for (_node_id, entity) in context.nodes.drain() {
         commands.entity(entity).despawn();
     }
-    log::info!("Cleared container: despawned all nodes");
+    log::debug!("Cleared container: despawned all nodes");
 }

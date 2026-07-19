@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import type { BevyStyle, KeyboardEventData } from "../types";
 import { Node, Text } from "./Intrinsics";
 
@@ -6,6 +6,9 @@ import { Node, Text } from "./Intrinsics";
 let processClipboard = "";
 
 const CURSOR_BLINK_MS = 530;
+
+/** Children of the focusable shell must not steal pointer hits / blur focus. */
+const PASS_THROUGH: BevyStyle = { pointerEvents: "none" };
 
 /**
  * Props for the TextInput component
@@ -31,6 +34,18 @@ function clamp(n: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, n));
 }
 
+/** Prefer non-empty `event.text`; empty string must not block `event.key`. */
+export function printableFromKeyEvent(event: {
+  key: string;
+  text?: string | null;
+}): string | null {
+  const raw = event.text;
+  if (raw != null && raw.length > 0) {
+    return raw;
+  }
+  return event.key.length === 1 ? event.key : null;
+}
+
 /**
  * Text input with caret, blink, Home/End/arrows, basic selection, and
  * in-process clipboard (Ctrl/Cmd+C/X/V/A). Uses host logical `event.key`.
@@ -51,6 +66,15 @@ export function TextInput({
   const [showCursor, setShowCursor] = useState(true);
   /** Bumped to restart the blink interval after caret moves / edits. */
   const [blinkEpoch, setBlinkEpoch] = useState(0);
+
+  // Keep latest controlled value / caret in refs so the host-held keydown
+  // callback never inserts against a stale closure after the first character.
+  const valueRef = useRef(value);
+  const cursorRef = useRef(cursor);
+  const anchorRef = useRef(anchor);
+  valueRef.current = value;
+  cursorRef.current = cursor;
+  anchorRef.current = anchor;
 
   // Keep caret in range when the controlled value shrinks.
   useEffect(() => {
@@ -83,29 +107,40 @@ export function TextInput({
 
   const replaceRange = useCallback(
     (start: number, end: number, insert: string) => {
-      const next = value.slice(0, start) + insert + value.slice(end);
+      const current = valueRef.current;
+      const next = current.slice(0, start) + insert + current.slice(end);
       const nextCursor = start + insert.length;
       onChange(next);
       setCursor(nextCursor);
+      cursorRef.current = nextCursor;
       setAnchor(null);
+      anchorRef.current = null;
       bumpBlink();
     },
-    [value, onChange, bumpBlink]
+    [onChange, bumpBlink]
   );
 
   const moveCaret = useCallback(
     (next: number, extend: boolean) => {
-      const clamped = clamp(next, 0, value.length);
+      const len = valueRef.current.length;
+      const clamped = clamp(next, 0, len);
       if (extend) {
-        setAnchor((a) => (a == null ? cursor : a));
+        setAnchor((a) => {
+          const nextAnchor = a == null ? cursorRef.current : a;
+          anchorRef.current = nextAnchor;
+          return nextAnchor;
+        });
         setCursor(clamped);
+        cursorRef.current = clamped;
       } else {
         setAnchor(null);
+        anchorRef.current = null;
         setCursor(clamped);
+        cursorRef.current = clamped;
       }
       bumpBlink();
     },
-    [value.length, cursor, bumpBlink]
+    [bumpBlink]
   );
 
   const handleKeyDown = useCallback(
@@ -113,35 +148,45 @@ export function TextInput({
       const key = event.key;
       const mod = !!(event.ctrlKey || event.metaKey);
       const shift = !!event.shiftKey;
+      const valueNow = valueRef.current;
+      const cursorNow = cursorRef.current;
+      const anchorNow = anchorRef.current;
+      const selA =
+        anchorNow == null ? cursorNow : Math.min(anchorNow, cursorNow);
+      const selB =
+        anchorNow == null ? cursorNow : Math.max(anchorNow, cursorNow);
+      const selecting = anchorNow != null && selA !== selB;
 
       // Clipboard / select-all (Ctrl or Cmd)
       if (mod && !event.altKey) {
         const lower = key.length === 1 ? key.toLowerCase() : key;
         if (lower === "a") {
           setAnchor(0);
-          setCursor(value.length);
+          anchorRef.current = 0;
+          setCursor(valueNow.length);
+          cursorRef.current = valueNow.length;
           bumpBlink();
           return;
         }
         if (lower === "c") {
-          if (hasSelection) {
-            processClipboard = value.slice(selStart, selEnd);
+          if (selecting) {
+            processClipboard = valueNow.slice(selA, selB);
           }
           return;
         }
         if (lower === "x") {
-          if (hasSelection) {
-            processClipboard = value.slice(selStart, selEnd);
-            replaceRange(selStart, selEnd, "");
+          if (selecting) {
+            processClipboard = valueNow.slice(selA, selB);
+            replaceRange(selA, selB, "");
           }
           return;
         }
         if (lower === "v") {
           if (processClipboard) {
-            if (hasSelection) {
-              replaceRange(selStart, selEnd, processClipboard);
+            if (selecting) {
+              replaceRange(selA, selB, processClipboard);
             } else {
-              replaceRange(cursor, cursor, processClipboard);
+              replaceRange(cursorNow, cursorNow, processClipboard);
             }
           }
           return;
@@ -155,37 +200,37 @@ export function TextInput({
       }
 
       if (key === "Backspace") {
-        if (hasSelection) {
-          replaceRange(selStart, selEnd, "");
-        } else if (cursor > 0) {
-          replaceRange(cursor - 1, cursor, "");
+        if (selecting) {
+          replaceRange(selA, selB, "");
+        } else if (cursorNow > 0) {
+          replaceRange(cursorNow - 1, cursorNow, "");
         }
         return;
       }
 
       if (key === "Delete") {
-        if (hasSelection) {
-          replaceRange(selStart, selEnd, "");
-        } else if (cursor < value.length) {
-          replaceRange(cursor, cursor + 1, "");
+        if (selecting) {
+          replaceRange(selA, selB, "");
+        } else if (cursorNow < valueNow.length) {
+          replaceRange(cursorNow, cursorNow + 1, "");
         }
         return;
       }
 
       if (key === "ArrowLeft") {
-        if (!shift && hasSelection) {
-          moveCaret(selStart, false);
+        if (!shift && selecting) {
+          moveCaret(selA, false);
         } else {
-          moveCaret(cursor - 1, shift);
+          moveCaret(cursorNow - 1, shift);
         }
         return;
       }
 
       if (key === "ArrowRight") {
-        if (!shift && hasSelection) {
-          moveCaret(selEnd, false);
+        if (!shift && selecting) {
+          moveCaret(selB, false);
         } else {
-          moveCaret(cursor + 1, shift);
+          moveCaret(cursorNow + 1, shift);
         }
         return;
       }
@@ -196,13 +241,14 @@ export function TextInput({
       }
 
       if (key === "End") {
-        moveCaret(value.length, shift);
+        moveCaret(valueNow.length, shift);
         return;
       }
 
       if (key === "Escape") {
         setIsFocused(false);
         setAnchor(null);
+        anchorRef.current = null;
         return;
       }
 
@@ -220,38 +266,31 @@ export function TextInput({
         return;
       }
 
-      const text =
-        event.text ?? (key.length === 1 ? key : null);
+      const text = printableFromKeyEvent(event);
       if (text) {
-        if (hasSelection) {
-          replaceRange(selStart, selEnd, text);
+        if (selecting) {
+          replaceRange(selA, selB, text);
         } else {
-          replaceRange(cursor, cursor, text);
+          replaceRange(cursorNow, cursorNow, text);
         }
       }
     },
-    [
-      value,
-      cursor,
-      hasSelection,
-      selStart,
-      selEnd,
-      replaceRange,
-      moveCaret,
-      bumpBlink,
-    ]
+    [replaceRange, moveCaret, bumpBlink]
   );
 
   const handleFocus = useCallback(() => {
     setIsFocused(true);
-    setCursor(value.length);
+    setCursor(valueRef.current.length);
+    cursorRef.current = valueRef.current.length;
     setAnchor(null);
+    anchorRef.current = null;
     bumpBlink();
-  }, [value.length, bumpBlink]);
+  }, [bumpBlink]);
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
     setAnchor(null);
+    anchorRef.current = null;
     setShowCursor(false);
   }, []);
 
@@ -275,6 +314,7 @@ export function TextInput({
     fontSize: 16,
     color: "#ffffff",
     ...textStyle,
+    pointerEvents: "none",
   };
 
   const defaultPlaceholderStyle: BevyStyle & {
@@ -284,6 +324,7 @@ export function TextInput({
     fontSize: 16,
     color: "#666666",
     ...placeholderStyle,
+    pointerEvents: "none",
   };
 
   const fontSize = defaultTextStyle.fontSize ?? 16;
@@ -299,6 +340,13 @@ export function TextInput({
     ? displayValue.slice(selEnd)
     : displayValue.slice(cursor);
 
+  const cursorStyle: BevyStyle = {
+    ...PASS_THROUGH,
+    width: cursorVisible ? 2 : 0,
+    height: fontSize,
+    backgroundColor: "#ffffff",
+  };
+
   return (
     <bevy-text-input
       style={containerStyle}
@@ -310,9 +358,7 @@ export function TextInput({
         <>
           <Node
             style={{
-              width: cursorVisible ? 2 : 0,
-              height: fontSize,
-              backgroundColor: "#ffffff",
+              ...cursorStyle,
               marginRight: cursorVisible ? 2 : 0,
             }}
           />
@@ -324,10 +370,12 @@ export function TextInput({
           {hasSelection ? (
             <Node
               style={{
+                ...PASS_THROUGH,
                 flexDirection: "row",
                 alignItems: "center",
                 backgroundColor: "#4a6aff",
                 ...selectionStyle,
+                pointerEvents: "none",
               }}
             >
               <Text
@@ -342,9 +390,7 @@ export function TextInput({
           ) : (
             <Node
               style={{
-                width: cursorVisible ? 2 : 0,
-                height: fontSize,
-                backgroundColor: "#ffffff",
+                ...cursorStyle,
                 marginLeft: before ? 1 : 0,
                 marginRight: after ? 1 : 0,
               }}

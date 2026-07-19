@@ -57,6 +57,7 @@ pub fn handle_input_interactions(
     mut focused: ResMut<FocusedNode>,
     parents: Query<&ChildOf>,
     roots: Query<&ReactRoot>,
+    focus_targets: Query<(Entity, &ReactNode, Option<&Focusable>, Option<&Button>)>,
     cameras: Query<&Camera>,
     windows: Query<&Window>,
     primary_window: Query<Entity, With<PrimaryWindow>>,
@@ -105,7 +106,9 @@ pub fn handle_input_interactions(
         let was_pressed = prev_interaction == Interaction::Pressed;
         let is_pressed = *interaction == Interaction::Pressed;
 
-        // Focus on press for focus targets; blur when pressing a non-focusable node
+        // Focus on press for focus targets. Clicks on descendants (e.g. TextInput
+        // glyphs) resolve to the nearest Focusable/Button ancestor — otherwise
+        // every keystroke re-layout that puts text under the cursor would blur.
         if is_pressed && !was_pressed {
             if can_focus {
                 apply_focus(
@@ -115,8 +118,18 @@ pub fn handle_input_interactions(
                     node_id,
                     root_id.clone(),
                 );
+            } else if let Some((focus_entity, focus_node_id)) =
+                find_focus_ancestor(entity, &parents, &focus_targets)
+            {
+                apply_focus(
+                    &mut focused,
+                    &event_queue,
+                    focus_entity,
+                    focus_node_id,
+                    root_id.clone(),
+                );
             } else {
-                // Click on a non-focusable React node → blur (click-outside within UI)
+                // True click-outside within the React tree (no focusable ancestor).
                 clear_focus(&mut focused, &event_queue);
             }
 
@@ -406,6 +419,24 @@ fn find_root_id(
 
 fn is_focus_target(focusable: Option<&Focusable>, button: Option<&Button>) -> bool {
     focusable.is_some() || button.is_some()
+}
+
+/// Walk toward the root for a [`Focusable`] / [`Button`] React node.
+fn find_focus_ancestor(
+    start: Entity,
+    parents: &Query<&ChildOf>,
+    targets: &Query<(Entity, &ReactNode, Option<&Focusable>, Option<&Button>)>,
+) -> Option<(Entity, u64)> {
+    let mut current = Some(start);
+    while let Some(entity) = current {
+        if let Ok((e, rn, focusable, button)) = targets.get(entity)
+            && is_focus_target(focusable, button)
+        {
+            return Some((e, rn.node_id));
+        }
+        current = parents.get(entity).ok().map(|c| c.parent());
+    }
+    None
 }
 
 fn apply_focus(

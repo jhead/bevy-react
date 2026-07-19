@@ -1,15 +1,19 @@
 use boa_gc::{Finalize, Trace, empty_trace};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::mpsc::{self, Receiver, Sender};
 
 /// Global counter for node IDs (used across threads)
 static NODE_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Thread-safe client for sending React RPC messages to the Bevy main thread
+/// Thread-safe client for sending React RPC messages to the Bevy main thread.
+///
+/// Uses an **unbounded** channel so `__react_commit_ops` / per-op natives never
+/// block the JS thread while Bevy is inside `execute(flush_events)` — a bounded
+/// `sync_channel` deadlocks once the buffer fills during a re-entrant commit.
 #[derive(Clone, Debug, Finalize)]
 pub struct ReactClient {
-    tx: SyncSender<ReactClientProto>,
+    tx: Sender<ReactClientProto>,
 }
 
 unsafe impl Trace for ReactClient {
@@ -62,8 +66,9 @@ impl ReactClientReceiver {
 impl ReactClient {
     /// Create a new ReactClient and its corresponding receiver
     pub fn new() -> (ReactClient, ReactClientReceiver) {
-        // Main message channel (bounded for backpressure)
-        let (tx, rx) = mpsc::sync_channel(256);
+        // Unbounded: JS must never block inside `execute(flush_events)` while
+        // committing binary/enum ops (bounded sync_channel deadlocks at capacity).
+        let (tx, rx) = mpsc::channel();
 
         (
             ReactClient { tx },

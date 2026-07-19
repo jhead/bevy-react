@@ -17,7 +17,10 @@ impl FetchModuleLoader {
     pub(crate) fn new() -> Self {
         Self {
             #[cfg(not(target_arch = "wasm32"))]
-            runtime: runtime::Builder::new_multi_thread().enable_all().build().unwrap(),
+            runtime: runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build ESM fetch tokio runtime"),
             local_modules: RefCell::new(HashMap::new()),
         }
     }

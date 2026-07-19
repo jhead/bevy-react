@@ -69,7 +69,10 @@ impl JsEngineClient {
         // This allows JS callbacks that fire during command processing to enqueue
         // new commands (via execute/load_esm_module) without deadlocking.
         let commands: Vec<JsCommand> = {
-            let mut q = self.queue.lock().unwrap();
+            let Ok(mut q) = self.queue.lock() else {
+                log::error!("JS command queue mutex poisoned during flush");
+                return;
+            };
             q.drain(..).collect()
         };
 
@@ -96,7 +99,11 @@ impl JsEngineClient {
 
     #[cfg(target_arch = "wasm32")]
     pub fn load_esm_module(&self, name: impl Into<String>, source: impl Into<String>) {
-        self.queue.lock().unwrap().push_back(JsCommand::LoadEsmModule {
+        let Ok(mut q) = self.queue.lock() else {
+            log::error!("JS command queue mutex poisoned during load_esm_module");
+            return;
+        };
+        q.push_back(JsCommand::LoadEsmModule {
             name: name.into(),
             source: source.into(),
         });
@@ -112,10 +119,11 @@ impl JsEngineClient {
 
     #[cfg(target_arch = "wasm32")]
     pub fn clear_esm_module_cache(&self) {
-        self.queue
-            .lock()
-            .unwrap()
-            .push_back(JsCommand::ClearEsmModuleCache);
+        let Ok(mut q) = self.queue.lock() else {
+            log::error!("JS command queue mutex poisoned during clear_esm_module_cache");
+            return;
+        };
+        q.push_back(JsCommand::ClearEsmModuleCache);
     }
 
     /// Execute a JS script.
@@ -130,10 +138,13 @@ impl JsEngineClient {
 
     #[cfg(target_arch = "wasm32")]
     pub fn execute(&self, source: impl Into<String>) {
-        self.queue
-            .lock()
-            .unwrap()
-            .push_back(JsCommand::Execute { source: source.into() });
+        let Ok(mut q) = self.queue.lock() else {
+            log::error!("JS command queue mutex poisoned during execute");
+            return;
+        };
+        q.push_back(JsCommand::Execute {
+            source: source.into(),
+        });
     }
 
     /// Register an extension with the JS engine.
@@ -146,10 +157,11 @@ impl JsEngineClient {
 
     #[cfg(target_arch = "wasm32")]
     pub fn register_extension(&self, extension: Arc<Box<dyn JsEngineExtension>>) {
-        self.queue
-            .lock()
-            .unwrap()
-            .push_back(JsCommand::RegisterExtension { extension });
+        let Ok(mut q) = self.queue.lock() else {
+            log::error!("JS command queue mutex poisoned during register_extension");
+            return;
+        };
+        q.push_back(JsCommand::RegisterExtension { extension });
     }
 
     /// Shutdown the JS engine.

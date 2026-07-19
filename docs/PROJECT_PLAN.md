@@ -6,7 +6,7 @@ Living roadmap for bevy-react. Items marked `[x]` landed on `main` (verify + ite
 
 The core architecture is sound and works end-to-end: Boa runs React on a worker thread (native) or main thread (WASM), a custom reconciler ships mutations over an RPC enum, and Bevy systems materialize entities. Early prototype status remains accurate for production use, but several structural blockers are closed: entity destroy on unmount, native structured event dispatch (no eval), WASM budgeted job pump (`ContextGate`, no leak/future-transmute), multi-root TS containers + instance maps, root teardown on `ReactRoot` despawn, borderWidth sync, and basic CI/tests/docs.
 
-Remaining gaps: style coverage still missing text shadow / line-break and image atlas/slice; built-ins incomplete vs production needs; Epic A manual demo smoke and full Boa+React e2e still open. A minimal Rust↔React data bridge (`ReactBridge` / [BRIDGE.md](BRIDGE.md)) is available for HUD-style bindings.
+Remaining gaps: full React/Vite counter bundle e2e still open (Boa host-API smoke in `plugin/tests/boa_smoke.rs` covers entity tree + synthesized click). Texture atlas indexing still TODO. A minimal Rust↔React data bridge (`ReactBridge` / [BRIDGE.md](BRIDGE.md)) powers the HUD example.
 
 ## Epic 1: Correctness of the render pipeline
 
@@ -25,9 +25,9 @@ Remaining gaps: style coverage still missing text shadow / line-break and image 
 - [x] Support 4-value/2-value shorthands for `margin`/`padding`/`borderRadius` ("8px 16px").
 - [x] Extend `parse_color`: full CSS named-color table, `hsl()/hsla()`, and shorthand `rgb(0 0 0 / 0.5)` syntax.
 - [x] Per-corner border radius and per-side border colors.
-- [x] Text styling: `fontFamily` via Bevy font assets, `textAlign`/`JustifyText`, and `lineHeight` wired in `apply_text_style*`. (Line-break behavior and text shadow still TODO.)
+- [x] Text styling: `fontFamily` via Bevy font assets, `textAlign`/`JustifyText`, `lineHeight`, `lineBreak` → `TextLayout`, and `textShadow` → `TextShadow` wired in `apply_text_style*`.
 - [x] Add `opacity`, `boxShadow`, and `BackgroundGradient` support (Bevy 0.17 has these). Wired in `apply_visual_style*`; opacity multiplies into colors (no Bevy `UiOpacity`).
-- [x] Image props: `objectFit` (ImageNode scale modes) and tint color wired on create/update. (Atlas/slice support still TODO.)
+- [x] Image props: `objectFit` (ImageNode scale modes), tint color, and nine-slice via `imageSlice` (`NodeImageMode::Sliced`). (Texture atlas indexing still TODO.)
 
 ## Epic 3: Event system
 
@@ -68,29 +68,29 @@ Remaining gaps: style coverage still missing text shadow / line-break and image 
 
 ## Epic 7: Quality, testing, CI
 
-- [ ] Rust unit tests for full `style.rs` coverage (Epic 2 owns `style.rs` body; a few unit tests exist). Message-handling: headless `App` + `MinimalPlugins` driving `ReactClientProto` — see `plugin/tests/message_handling.rs` and `react/message_tests.rs`.
+- [x] Rust unit tests for `style.rs` coverage (shorthands, grid, colors, shadows/gradients, flex/gap, text/image helpers in `style.rs` `#[cfg(test)]`). Message-handling: headless `App` + `MinimalPlugins` driving `ReactClientProto` — see `plugin/tests/message_handling.rs` and `react/message_tests.rs`.
 - [x] TS tests for the reconciler host config (mock `__react_*` globals; mount/unmount, update, reorder/`insert_before`, destroy, list shuffle + duplicate destroy).
 - [x] Epic A verification: destroy-subtree, backgroundColor clear→remove component, double-destroy idempotent (Rust); list shuffle removeChild+detachDeletedInstance duplicate destroy (TS).
-- [ ] An end-to-end smoke test: headless Bevy + real Boa rendering a counter app, asserting the entity tree and a synthesized click. (RPC→ECS smoke in `plugin/tests/message_handling.rs` lands; full Boa+React still open.)
+- [x] End-to-end smoke: headless Bevy + real Boa host API (`plugin/tests/boa_smoke.rs`) builds a counter-like tree and asserts ECS + synthesized click. (Full React/Vite bundle still out of scope — see test module docs.)
 - [x] WASM CI build + native test + lint + `pnpm build`/`pnpm test` pipeline (`.github/workflows/ci.yml`; wasm uses `--no-default-features --features fetch`).
 - [x] Demote the per-message `log::info!` spam to `trace`/`debug` in `systems/render.rs`.
-- [ ] Benchmark and optimize the hot path (per-update JSON round-trip; eval import path removed for events).
+- [ ] Benchmark and optimize the hot path (skipped for now; optional tiny criterion later).
 
 ## Epic 8: API polish & release
 
 - [ ] Publish `bevy_react` to crates.io and `bevy-react` to npm with locked version pairing.
 - [x] Write real docs: README rewrite, getting-started, supported style props table, architecture notes, CONTRIBUTING, CHANGELOG. (rustdoc still thin.)
-- [x] Ship 2–3 more examples: menu screen + forms/settings panel landed (`examples/menu`, `examples/forms`). HUD with game-state binding still TODO (bridge exists; example not yet).
+- [x] Ship 2–3 more examples: menu, forms/settings, and HUD with game-state binding (`examples/menu`, `examples/forms`, `examples/hud`).
 - [x] Rust↔React data bridge: a supported way to push game state into React (context/store fed from ECS) and call registered Rust functions from JS.
-- [ ] Bevy version support policy and a tracking matrix (currently pinned to 0.17.3).
-- [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until Epic 2 leftovers and Epic 7 e2e land.
+- [x] Bevy version support policy and tracking matrix ([BEVY_VERSION.md](BEVY_VERSION.md); pinned to 0.17.3).
+- [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until publish.
 
-Rough priority for remaining work: **Epic A** (manual demo smoke) → Epic 2 leftovers (text shadow / line-break, atlas/slice) → Epic 7 e2e / HUD example → publish.
+Rough priority for remaining work: Epic 2 atlas indexing leftovers → optional criterion micro-bench → publish. Epic A interactive checklist: [DEMO_SMOKE.md](DEMO_SMOKE.md).
 
 ## Verification backlog (Epic A — from mid-stream review)
 
 - [x] `cargo clippy -D warnings`, full `cargo test`, `tsc`, vitest green on every commit
 - [x] FrameJobExecutor: eliminate `Box::leak` + future `transmute` via `ContextGate` in `builder.rs` (attach/detach raw pointer; layout-reinterpret `RefCell` only; drop pending jobs if Context address changes)
-- [ ] Manual demo smoke (native; wasm if feasible) for click/hover/focus/keyboard via event queue
+- [x] Manual demo smoke checklist + automated build/RPC smoke (`docs/DEMO_SMOKE.md`, `scripts/demo-smoke.sh`)
 - [x] Headless `ReactClientProto` tests: destroy-subtree, clear-component-on-update, double-destroy idempotent (`react/message_tests.rs` + `plugin/tests/message_handling.rs`)
 - [x] Reorder-heavy list updates: destroy stays silent when both `removeChild` and `detachDeletedInstance` fire (vitest)

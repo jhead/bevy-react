@@ -10,7 +10,7 @@ categories = ["gui", "game-development"]
 readme = "../README.md"
 
 [dependencies]
-bevy = "0.17.3"
+bevy = { version = "0.17.3", features = ["experimental_bevy_ui_widgets"] }
 boa_engine = "0.21.0"
 boa_gc = "0.21.0"
 boa_runtime = "0.21.0"

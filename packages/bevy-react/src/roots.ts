@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Fiber } from "react-reconciler";
+import { injectBevyReactDevTools } from "./devtools";
 import { reportErrorToHost, withErrorBoundary } from "./ErrorBoundary";
 import {
   createBevyReconciler,
@@ -75,18 +75,7 @@ export function ensureRoot(rootId: string): BevyRootState {
     null // transitionCallbacks
   );
 
-  reconciler.injectIntoDevTools({
-    bundleType: 1,
-    version: "1",
-    rendererPackageName: "bevy-react",
-    findFiberByHostInstance: (instance: unknown) =>
-      instance as unknown as Fiber | null,
-    rendererConfig: {
-      supportsMutation: true,
-      supportsPersistence: false,
-      supportsHydration: false,
-    },
-  });
+  injectBevyReactDevTools(reconciler);
 
   const state: BevyRootState = {
     rootId,

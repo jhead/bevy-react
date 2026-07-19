@@ -61,6 +61,21 @@ export {
 } from "./ErrorBoundary";
 export type { ReportErrorOptions } from "./ErrorBoundary";
 
+export {
+  BEVY_REACT_DEVTOOLS_DEFAULT_URL,
+  BEVY_REACT_DEVTOOLS_PORT,
+  connectDevToolsBridge,
+  disconnectDevToolsBridge,
+  getDevToolsSnapshot,
+  getDevToolsSnapshotJson,
+  injectBevyReactDevTools,
+} from "./devtools";
+export type {
+  DevToolsNodeSnapshot,
+  DevToolsRootSnapshot,
+  DevToolsSnapshot,
+} from "./devtools";
+
 export interface BevyReactApp {
   render: (rootId: string) => void;
   dispatchEvent: typeof dispatchEvent;

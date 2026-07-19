@@ -202,15 +202,62 @@ Lower-level helpers:
 | `__react_flush_bridge()` | Host drains dirty channels + call results |
 | `__react_call(name, argsJson, callId)` | JS enqueues a Rust handler call |
 
-## Codegen path (scaffold)
+## TypeScript codegen (`ts-rs`)
 
-Full `specta` / `ts-rs` codegen is **not** wired yet. For now:
+Enabled with the plugin feature `bridge-codegen` (pulls in [`ts-rs`](https://docs.rs/ts-rs)). Chose **ts-rs** over specta for this MVP: serde-attribute compatibility is built-in, and we only need type declarations plus a thin command-wrapper emitter (not full RPC function introspection).
 
-1. Define a `Serialize` resource in Rust (e.g. `PlayerStats` in `examples/hud`).
-2. Mirror the JSON shape in TypeScript (`examples/hud/ui/src/hudTypes.ts`).
-3. Keep shapes honest with a Rust unit test (`player_stats_json_shape_matches_ts_contract` in `bridge.rs`) and the `PLAYER_STATS_KEYS` constant on the TS side.
+### HUD end-to-end
 
-**Next steps for full codegen:** add an optional `ts-rs` / `specta` feature that emits `.ts` from annotated Rust types into `packages/bevy-react` or the example UI, and generate typed `callNative` wrappers from `register` metadata.
+1. Annotate a serializable resource with `Serialize` + `ts_rs::TS` (see `examples/hud/src/bridge_types.rs`).
+2. List registered commands as [`BridgeCommandMeta`] values (`name`, `ts_fn`, `args_ts`, `result_ts`).
+3. Build a [`GeneratedBridgeTs`] bundle and assert freshness in a unit test.
+4. Commit the output under `examples/hud/ui/src/generated/`. App helpers (`INITIAL_PLAYER_STATS`, `hpRatio`) stay in `hudTypes.ts` and re-export generated symbols.
+
+```bash
+# Rewrite generated files, then verify
+./scripts/generate-bridge-types.sh
+
+# CI / local: fail if committed output is stale
+cargo test --manifest-path examples/hud/Cargo.toml \
+  bridge_types::tests::generated_bridge_typescript_is_fresh -- --exact
+```
+
+Typed wrappers (`addScore`, `heal`) call `callNative` with the correct Promise result types. Prefer them over stringly `callNative("add_score", …)` in app UI.
+
+### Extending in your app
+
+```rust
+use bevy_react::{
+    BridgeCommandMeta, GeneratedBridgeTs, assert_bridge_typescript_fresh,
+};
+
+#[derive(Serialize, ts_rs::TS)]
+struct MyState { /* … */ }
+
+const COMMANDS: &[BridgeCommandMeta] = &[
+    BridgeCommandMeta {
+        name: "do_thing",
+        ts_fn: "doThing",
+        args_ts: "{ id: number }",
+        result_ts: "{ ok: boolean }",
+    },
+];
+
+#[test]
+fn generated_bridge_typescript_is_fresh() {
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/src/generated");
+    let bundle = GeneratedBridgeTs::new()
+        .with_type::<MyState>("MyState.ts")
+        .with_commands("commands.ts", COMMANDS)
+        .with_barrel("index.ts", &["MyState.ts", "commands.ts"]);
+    // UPDATE_BRIDGE_TYPES=1 rewrites; otherwise asserts equality.
+    assert_bridge_typescript_fresh(&out, &bundle);
+}
+```
+
+Enable `bevy_react` with `features = ["bridge-codegen"]` and add `ts-rs` to the app crate. Keep command metadata next to the `bridge.register(…)` call sites so names cannot drift unnoticed.
+
+Shape tests remain: Rust serde keys in `bridge_types` tests, plus the Vitest key contract in `packages/bevy-react/tests/bridge.test.ts`.
 
 ## Status
 
@@ -222,8 +269,8 @@ Full `specta` / `ts-rs` codegen is **not** wired yet. For now:
 | `callNative` return values (Promise) | Done |
 | `useResource` / selector `useBridgeState` | Done |
 | `useQuery` | Done |
-| Hand-written parallel types + shape test | Done (hud) |
-| specta / ts-rs codegen | TODO |
+| `ts-rs` codegen + typed command wrappers (HUD) | Done |
+| Auto-derive command meta from `register` closures | TODO |
 
 ## Notes
 

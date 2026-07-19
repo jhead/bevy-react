@@ -842,8 +842,9 @@ mod tests {
         assert_eq!(live[0].1, json!({ "count": 9 }));
     }
 
-    /// Hand-written TS parallel type contract: keys must stay in sync with
-    /// `examples/hud/ui/src/hudTypes.ts` (see docs/BRIDGE.md codegen notes).
+    /// JSON shape contract for HUD `PlayerStats` (keys must match
+    /// `examples/hud/ui/src/generated/` — regenerate via
+    /// `./scripts/generate-bridge-types.sh`).
     #[test]
     fn player_stats_json_shape_matches_ts_contract() {
         let stats = PlayerStats {

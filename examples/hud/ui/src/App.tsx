@@ -5,12 +5,13 @@ import {
   Button,
   ProgressBar,
   useResource,
-  callNative,
   useInteraction,
 } from 'bevy-react'
 import {
   INITIAL_PLAYER_STATS,
   hpRatio,
+  addScore,
+  heal,
   type PlayerStats,
 } from './hudTypes'
 
@@ -113,13 +114,13 @@ function App(): ReactNode {
         <ActionButton
           label="+10 Score"
           onClick={() => {
-            void callNative('add_score', 10)
+            void addScore(10)
           }}
         />
         <ActionButton
           label="Heal"
           onClick={() => {
-            void callNative('heal')
+            void heal()
           }}
         />
         <Text style={{ fontSize: 12, color: '#8899aa', marginLeft: 8 }}>

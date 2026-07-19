@@ -3,16 +3,21 @@
 //! `PlayerStats` is registered as a resource store on the `"hud"` channel.
 //! The UI reads it with `useResource` / `useBridgeState` and can call
 //! `add_score` / `heal` via `callNative` (Promise-returning).
+//!
+//! TypeScript bindings are generated from [`bridge_types`] — see
+//! `docs/BRIDGE.md` and `./scripts/generate-bridge-types.sh`.
 
 use bevy::prelude::*;
 use bevy_react::{
     ReactBridge, ReactBundle, ReactHmrRoot, ReactPlugin, ReactScriptSource, ViteDevSource,
     js_bevy::JsPlugin,
 };
-use serde::Serialize;
 
 #[path = "../../common/auto_screenshot.rs"]
 mod auto_screenshot;
+mod bridge_types;
+
+use bridge_types::PlayerStats;
 
 fn main() {
     App::new()
@@ -28,17 +33,6 @@ fn main() {
         .add_systems(Startup, (setup_ui, setup_bridge))
         .add_systems(Update, tick_player)
         .run();
-}
-
-/// ECS resource mirrored to React via `register_resource_store`.
-///
-/// Keep field names in sync with `examples/hud/ui/src/hudTypes.ts`
-/// (hand-written parallel types; see `docs/BRIDGE.md`).
-#[derive(Resource, Clone, Serialize)]
-struct PlayerStats {
-    hp: i32,
-    max_hp: i32,
-    score: u32,
 }
 
 fn setup_ui(mut commands: Commands) {

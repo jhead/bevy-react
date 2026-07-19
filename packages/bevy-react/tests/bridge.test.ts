@@ -99,11 +99,11 @@ describe("bridge", () => {
   });
 });
 
-/** Mirrors examples/hud/ui/src/hudTypes.ts PLAYER_STATS_KEYS. */
+/** Mirrors examples/hud generated PLAYER_STATS_KEYS (Rust serde field order). */
 const PLAYER_STATS_KEYS = ["hp", "max_hp", "score"] as const;
 
 describe("hud PlayerStats JSON shape contract", () => {
-  it("matches the hand-written TS / Rust serde keys", () => {
+  it("matches generated TS / Rust serde keys", () => {
     const fixture = { hp: 80, max_hp: 100, score: 1200 };
     expect(Object.keys(fixture)).toEqual([...PLAYER_STATS_KEYS]);
   });

@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use bevy::input::keyboard::Key;
+use bevy::input::mouse::MouseScrollUnit;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use boa_gc::{Finalize, Trace, empty_trace};
@@ -82,15 +83,15 @@ pub fn pointer_payload(
     relative: Option<&RelativeCursorPosition>,
     window_cursor: Option<Vec2>,
 ) -> Value {
-    if let Some(rel) = relative {
-        if let Some(normalized) = rel.normalized {
-            return json!({
-                "x": normalized.x,
-                "y": normalized.y,
-                "normalized": true,
-                "cursorOver": rel.cursor_over,
-            });
-        }
+    if let Some(rel) = relative
+        && let Some(normalized) = rel.normalized
+    {
+        return json!({
+            "x": normalized.x,
+            "y": normalized.y,
+            "normalized": true,
+            "cursorOver": rel.cursor_over,
+        });
     }
 
     if let Some(pos) = window_cursor {
@@ -102,6 +103,31 @@ pub fn pointer_payload(
     }
 
     Value::Null
+}
+
+/// Build a wheel event payload (DOM-like `deltaX` / `deltaY` / `deltaMode`).
+///
+/// `deltaMode`: `0` = pixel, `1` = line (matches `WheelEvent.DOM_DELTA_*`).
+pub fn wheel_payload(delta: Vec2, unit: MouseScrollUnit) -> Value {
+    let delta_mode = match unit {
+        MouseScrollUnit::Pixel => 0,
+        MouseScrollUnit::Line => 1,
+    };
+    json!({
+        "deltaX": delta.x,
+        "deltaY": delta.y,
+        "deltaMode": delta_mode,
+    })
+}
+
+/// Build a scroll position payload after applying a wheel delta.
+pub fn scroll_payload(scroll_left: f32, scroll_top: f32, delta: Vec2) -> Value {
+    json!({
+        "scrollLeft": scroll_left,
+        "scrollTop": scroll_top,
+        "deltaX": delta.x,
+        "deltaY": delta.y,
+    })
 }
 
 /// Convert Bevy logical [`Key`] to a DOM-like `KeyboardEvent.key` string.

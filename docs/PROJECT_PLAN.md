@@ -6,7 +6,7 @@ Living roadmap for bevy-react. Items marked `[x]` landed on `main` (verify + ite
 
 The core architecture is sound and works end-to-end: Boa runs React on a worker thread (native) or main thread (WASM), a custom reconciler ships mutations over an RPC enum, and Bevy systems materialize entities. Early prototype status remains accurate for production use, but several structural blockers are closed: entity destroy on unmount, native structured event dispatch (no eval), WASM budgeted job pump, borderWidth sync, and basic CI/tests/docs.
 
-Remaining structural gaps: style coverage is shallow vs CSS, many built-ins are compositional stubs, and there is no public Rust↔React data bridge. Multi-root fiber containers and root teardown are in place.
+Remaining structural gaps: Epic 1 multi-root checkbox still open (TS largely done), style coverage and built-ins incomplete vs production needs, and there is no public Rust↔React data bridge. Root teardown on `ReactRoot` despawn is in place.
 
 ## Epic 1: Correctness of the render pipeline
 

@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
+import type { BevyHostInstance } from "./entity";
 
 /**
  * Style properties that map to Bevy's UI Style component.
@@ -139,6 +140,22 @@ export interface BevyStyle {
   objectFit?: "fill" | "contain" | "cover" | "none" | "scale-down" | "stretch" | "auto";
   tint?: string;
   tintColor?: string;
+
+  /**
+   * Host-side hover style overrides. Applied in Rust from Bevy `Interaction`
+   * (no React round-trip). JS still handles `onClick` / pointer events.
+   */
+  hover?: BevyStyle;
+  /** Host-side pressed / active overrides (`Interaction::Pressed`). */
+  pressed?: BevyStyle;
+  /** Host-side focused overrides (keyboard / input focus). */
+  focused?: BevyStyle;
+  /**
+   * Host-side transitions for color/numeric props between interaction states.
+   * String: `"backgroundColor 100ms"` or `"backgroundColor 100ms, opacity 200ms"`.
+   * Object: `{ backgroundColor: 100 }` (values in milliseconds).
+   */
+  transition?: string | Record<string, number | string>;
 }
 
 /**
@@ -147,6 +164,11 @@ export interface BevyStyle {
 export interface NodeProps {
   style?: BevyStyle;
   children?: ReactNode;
+  /**
+   * Named Rust bundles to attach to this UI entity (ECS escape hatch).
+   * Register appliers with `BundleRegistry::register("Glow", ...)`.
+   */
+  components?: string[];
   onClick?: (event?: PointerSyntheticEvent | PointerEventData) => void;
   onPress?: (event?: PointerSyntheticEvent | PointerEventData) => void;
   onRelease?: (event?: PointerSyntheticEvent | PointerEventData) => void;
@@ -224,6 +246,41 @@ export type ScrollSyntheticEvent = ScrollEventData & SyntheticEventExtras;
 export interface ButtonProps extends NodeProps {}
 
 /**
+ * Host props for headless `bevy-slider`.
+ */
+export interface SliderHostProps extends NodeProps {
+  value?: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  disabled?: boolean;
+  onChange?: (event: ChangeSyntheticEvent | { value: number }) => void;
+}
+
+/**
+ * Host props for `bevy-slider-thumb`.
+ */
+export interface SliderThumbHostProps extends NodeProps {}
+
+/**
+ * Host props for headless `bevy-checkbox`.
+ */
+export interface CheckboxHostProps extends NodeProps {
+  checked?: boolean;
+  disabled?: boolean;
+  onChange?: (event: ChangeSyntheticEvent | { value: boolean }) => void;
+}
+
+/**
+ * Value-change payload from host widgets (`change` events).
+ */
+export interface ChangeEventData {
+  value?: number | boolean | string;
+}
+
+export type ChangeSyntheticEvent = ChangeEventData & SyntheticEventExtras;
+
+/**
  * Props for the internal <bevy-text-input> element (focusable container)
  */
 export interface TextInputInternalProps extends NodeProps {
@@ -282,8 +339,11 @@ export interface BevyTextInstance {
  * Users should import the exported components (Node, Button, Text, Image) instead.
  */
 type BevyIntrinsicElements = {
-  "bevy-node": NodeProps;
-  "bevy-button": ButtonProps;
+  "bevy-node": NodeProps & { ref?: Ref<BevyHostInstance> };
+  "bevy-button": ButtonProps & { ref?: Ref<BevyHostInstance> };
+  "bevy-slider": SliderHostProps;
+  "bevy-slider-thumb": SliderThumbHostProps;
+  "bevy-checkbox": CheckboxHostProps;
   "bevy-text": TextProps;
   "bevy-image": ImageProps;
   "bevy-text-input": TextInputInternalProps;

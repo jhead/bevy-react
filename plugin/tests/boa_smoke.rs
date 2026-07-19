@@ -16,8 +16,8 @@ use bevy::prelude::*;
 use bevy_react::js::JsEngineBuilder;
 use bevy_react::{
     process_react_messages, ReactBridge, ReactClient, ReactClientReceiver, ReactContext,
-    ReactEventQueue, ReactJsExtension, ReactMessageReceiver, ReactNode, ReactReloadFlag,
-    ReactRoot, ReactRootMap, FLUSH_EVENTS_SCRIPT,
+    ReactEntityMap, ReactEventQueue, ReactJsExtension, ReactMessageReceiver, ReactNode,
+    ReactReloadFlag, ReactRoot, ReactRootMap, FLUSH_EVENTS_SCRIPT,
 };
 use serde_json::json;
 
@@ -29,6 +29,7 @@ fn setup_app(receiver: ReactClientReceiver) -> App {
         .add_plugins(AssetPlugin::default())
         .init_asset::<Image>()
         .init_resource::<ReactRootMap>()
+        .init_resource::<ReactEntityMap>()
         .insert_resource(ReactMessageReceiver(receiver))
         .add_systems(Update, process_react_messages);
 
@@ -93,6 +94,7 @@ fn boa_native_functions_build_tree_and_handle_synthesized_click() {
     let event_queue = ReactEventQueue::new();
     let bridge = ReactBridge::new();
     let reload = ReactReloadFlag::new();
+    let entity_map = bevy_react::ReactEntityMap::default();
 
     let engine = JsEngineBuilder::new()
         .with_extension(ReactJsExtension::new(
@@ -100,6 +102,7 @@ fn boa_native_functions_build_tree_and_handle_synthesized_click() {
             event_queue.clone(),
             bridge,
             reload,
+            entity_map,
         ))
         .build()
         .expect("build JsEngine");

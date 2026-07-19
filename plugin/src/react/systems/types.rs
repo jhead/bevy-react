@@ -13,6 +13,13 @@ pub struct ReactNode {
     pub node_id: u64,
 }
 
+/// Desired named bundles from the React `components` prop (e.g. `["Glow"]`).
+///
+/// Applied by [`crate::react::components_registry::apply_react_bundles`] via
+/// [`crate::react::BundleRegistry`].
+#[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReactBundleNames(pub Vec<String>);
+
 /// Marker component for React text nodes
 #[derive(Component)]
 pub struct ReactTextNode;
@@ -187,4 +194,96 @@ pub struct FocusedNode {
     pub entity: Option<Entity>,
     /// React root id for the focused element (cached for keyboard events)
     pub root_id: Option<String>,
+}
+
+/// Host-owned interaction style state (hover / pressed / focused + transitions).
+///
+/// Stored when React style props include nested overrides or a `transition`.
+/// Applied each frame by [`crate::react::systems::apply_interaction_styles`].
+#[derive(Component, Clone, Debug)]
+pub struct ReactStyleState {
+    pub base: crate::react::style::StyleProps,
+    pub hover: Option<crate::react::style::StyleProps>,
+    pub pressed: Option<crate::react::style::StyleProps>,
+    pub focused: Option<crate::react::style::StyleProps>,
+    pub transition: crate::react::style::StyleTransitions,
+    pub anim: StyleAnimationState,
+}
+
+impl ReactStyleState {
+    pub fn from_props(props: &crate::react::style::StyleProps) -> Self {
+        Self {
+            base: props.without_interaction_meta(),
+            hover: props
+                .hover
+                .as_ref()
+                .map(|h| h.without_interaction_meta()),
+            pressed: props
+                .pressed
+                .as_ref()
+                .map(|p| p.without_interaction_meta()),
+            focused: props
+                .focused
+                .as_ref()
+                .map(|f| f.without_interaction_meta()),
+            transition: props.transition.clone(),
+            anim: StyleAnimationState::default(),
+        }
+    }
+}
+
+/// Runtime tracks for host-side color / opacity transitions.
+#[derive(Clone, Debug, Default)]
+pub struct StyleAnimationState {
+    pub background_color: Option<ColorAnim>,
+    pub border_color: Option<ColorAnim>,
+    pub opacity: Option<FloatAnim>,
+    pub color: Option<ColorAnim>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ColorAnim {
+    pub from: Color,
+    pub to: Color,
+    pub elapsed: f32,
+    pub duration: f32,
+}
+
+impl ColorAnim {
+    pub fn current(&self) -> Color {
+        if self.duration <= 0.0 {
+            return self.to;
+        }
+        let t = (self.elapsed / self.duration).clamp(0.0, 1.0);
+        lerp_color(self.from, self.to, t)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct FloatAnim {
+    pub from: f32,
+    pub to: f32,
+    pub elapsed: f32,
+    pub duration: f32,
+}
+
+impl FloatAnim {
+    pub fn current(&self) -> f32 {
+        if self.duration <= 0.0 {
+            return self.to;
+        }
+        let t = (self.elapsed / self.duration).clamp(0.0, 1.0);
+        self.from + (self.to - self.from) * t
+    }
+}
+
+fn lerp_color(from: Color, to: Color, t: f32) -> Color {
+    let a = from.to_srgba();
+    let b = to.to_srgba();
+    Color::srgba(
+        a.red + (b.red - a.red) * t,
+        a.green + (b.green - a.green) * t,
+        a.blue + (b.blue - a.blue) * t,
+        a.alpha + (b.alpha - a.alpha) * t,
+    )
 }

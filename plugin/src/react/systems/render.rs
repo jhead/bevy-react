@@ -3,13 +3,19 @@ use bevy::text::TextLayout;
 use bevy::ui::FocusPolicy;
 
 use crate::react::client::ReactClientProto;
+use crate::react::components_registry::{self, ReactEntityMap};
 use crate::react::style::{
     json_to_style, parse_color, parse_props, parse_val, style_font_family, style_line_height,
     style_object_fit, style_opacity, style_pointer_events, style_text_align, style_tint,
     style_to_background_gradient, style_to_border_color, style_to_border_radius,
     style_to_box_shadow, PointerEvents, StyleProps,
 };
+use crate::react::systems::interaction_style::sync_react_style_state;
 use crate::react::systems::types::*;
+use crate::react::widgets::{
+    insert_button_widget, insert_checkbox_widget, insert_slider_thumb, insert_slider_widget,
+    sync_widget_props,
+};
 
 /// Process incoming React messages and apply them to the ECS
 pub fn process_react_messages(
@@ -17,6 +23,7 @@ pub fn process_react_messages(
     receiver: Option<Res<ReactMessageReceiver>>,
     asset_server: Res<AssetServer>,
     root_map: Res<ReactRootMap>,
+    entity_map: Res<ReactEntityMap>,
     default_font: Option<Res<ReactDefaultFont>>,
     root_fonts: Query<&ReactRootFont>,
     mut contexts: Query<(Entity, Mut<ReactContext>)>,
@@ -51,6 +58,7 @@ pub fn process_react_messages(
                     context.as_mut(),
                     &asset_server,
                     fallback_font.as_ref(),
+                    &entity_map,
                     node_id,
                     &node_type,
                     &props_json,
@@ -74,6 +82,7 @@ pub fn process_react_messages(
                     &mut commands,
                     context.as_mut(),
                     fallback_font.as_ref(),
+                    &entity_map,
                     node_id,
                     &content,
                 );
@@ -139,6 +148,7 @@ pub fn process_react_messages(
                     context.as_mut(),
                     &asset_server,
                     fallback_font.as_ref(),
+                    &entity_map,
                     node_id,
                     &props_json,
                     is_text,
@@ -190,7 +200,13 @@ pub fn process_react_messages(
                     continue;
                 };
 
-                handle_destroy_node(&mut commands, context_entity, context.as_mut(), node_id);
+                handle_destroy_node(
+                    &mut commands,
+                    context_entity,
+                    context.as_mut(),
+                    &entity_map,
+                    node_id,
+                );
             }
 
             ReactClientProto::ClearContainer { root_id } => {
@@ -204,7 +220,7 @@ pub fn process_react_messages(
                 };
 
                 log::debug!("Clearing container: {}", root_id);
-                handle_clear_container(&mut commands, *root, &mut context);
+                handle_clear_container(&mut commands, *root, &mut context, &entity_map);
             }
 
             ReactClientProto::Complete => {
@@ -232,6 +248,7 @@ fn handle_create_node(
     context: &mut ReactContext,
     asset_server: &AssetServer,
     fallback_font: Option<&Handle<Font>>,
+    entity_map: &ReactEntityMap,
     node_id: u64,
     node_type: &str,
     props_json: &str,
@@ -241,8 +258,28 @@ fn handle_create_node(
 
     let mut entity_commands = match node_type {
         "bevy-button" => {
-            // Button node
-            commands.spawn((Button, style, ReactNode { node_id }))
+            // Legacy UI Button (Interaction) + headless ui_widgets::Button (Pressed/a11y).
+            let mut cmd = commands.spawn((Button, style, ReactNode { node_id }));
+            insert_button_widget(&mut cmd);
+            cmd
+        }
+
+        "bevy-slider" => {
+            let mut cmd = commands.spawn((style, ReactNode { node_id }));
+            insert_slider_widget(&mut cmd, props_json);
+            cmd
+        }
+
+        "bevy-slider-thumb" => {
+            let mut cmd = commands.spawn((style, ReactNode { node_id }));
+            insert_slider_thumb(&mut cmd);
+            cmd
+        }
+
+        "bevy-checkbox" => {
+            let mut cmd = commands.spawn((style, ReactNode { node_id }));
+            insert_checkbox_widget(&mut cmd, props_json);
+            cmd
         }
 
         "bevy-image" => {
@@ -323,8 +360,17 @@ fn handle_create_node(
         entity_commands.insert(ZIndex(z));
     }
 
-    context.nodes.insert(node_id, entity_commands.id());
-    let entity = entity_commands.id(); // capture id for logging
+    // Host-side hover/pressed/focused + transitions
+    if let Some(ref style_props) = props.style
+        && style_props.has_interaction_styles()
+    {
+        entity_commands.insert(ReactStyleState::from_props(style_props));
+    }
+
+    let entity = entity_commands.id();
+    drop(entity_commands);
+    context.nodes.insert(node_id, entity);
+    components_registry::sync_bundle_names(commands, entity_map, entity, node_id, props_json);
 
     log::debug!(
         "Created {} node: id={} entity={:?}",
@@ -339,6 +385,7 @@ fn handle_create_text(
     commands: &mut Commands,
     context: &mut ReactContext,
     fallback_font: Option<&Handle<Font>>,
+    entity_map: &ReactEntityMap,
     node_id: u64,
     content: &str,
 ) {
@@ -354,8 +401,10 @@ fn handle_create_text(
         });
     }
     let entity = cmd.id();
+    drop(cmd);
 
     context.nodes.insert(node_id, entity);
+    components_registry::sync_bundle_names(commands, entity_map, entity, node_id, "{}");
     log::debug!("Created text node: id={} entity={:?} text={}", node_id, entity, content);
 }
 
@@ -420,6 +469,7 @@ fn handle_update_node(
     context: &ReactContext,
     asset_server: &AssetServer,
     fallback_font: Option<&Handle<Font>>,
+    entity_map: &ReactEntityMap,
     node_id: u64,
     props_json: &str,
     is_text: bool,
@@ -462,6 +512,7 @@ fn handle_update_node(
                 }
             }
         }
+        components_registry::sync_bundle_names(commands, entity_map, entity, node_id, props_json);
         log::debug!("Updated text node: id={}", node_id);
         return;
     }
@@ -497,6 +548,11 @@ fn handle_update_node(
         }
     }
 
+    sync_react_style_state(commands, entity, props.style.as_ref());
+
+    // Sync headless widget value/checked/disabled from React props.
+    sync_widget_props(commands, entity, props_json.to_string());
+
     // Update image if provided
     if let Some(image_path) = props.src.clone().or(props.image.clone()) {
         let image_handle: Handle<Image> = asset_server.load(image_path);
@@ -515,6 +571,7 @@ fn handle_update_node(
         commands.entity(entity).insert(image_node);
     }
 
+    components_registry::sync_bundle_names(commands, entity_map, entity, node_id, props_json);
     log::debug!("Updated node: id={}", node_id);
 }
 
@@ -541,12 +598,16 @@ fn handle_destroy_node(
     commands: &mut Commands,
     context_entity: Entity,
     context: &mut ReactContext,
+    entity_map: &ReactEntityMap,
     node_id: u64,
 ) {
     let Some(entity) = context.nodes.remove(&node_id) else {
         // Already destroyed (e.g. removeChild + detachDeletedInstance)
         return;
     };
+
+    components_registry::forget_node(entity_map, node_id);
+    let entity_map = entity_map.clone();
 
     // Purge descendant node_id mappings and recursively despawn the entity tree.
     // Children relationships are only readable once commands are applied, so defer.
@@ -557,6 +618,8 @@ fn handle_destroy_node(
         if let Some(mut ctx) = world.get_mut::<ReactContext>(context_entity) {
             ctx.nodes.retain(|_, mapped| !subtree.contains(mapped));
         }
+
+        components_registry::forget_entities(&entity_map, &subtree);
 
         if world.get_entity(entity).is_ok() {
             world.entity_mut(entity).despawn();
@@ -643,8 +706,10 @@ fn handle_clear_container(
     commands: &mut Commands,
     context_entity: Entity,
     context: &mut ReactContext,
+    entity_map: &ReactEntityMap,
 ) {
     let root = context.root.unwrap_or(context_entity);
+    let entity_map = entity_map.clone();
 
     // Defer so we can read `Children` after prior spawn/attach commands apply.
     commands.queue(move |world: &mut World| {
@@ -662,6 +727,8 @@ fn handle_clear_container(
         if let Some(mut ctx) = world.get_mut::<ReactContext>(context_entity) {
             ctx.nodes.retain(|_, entity| !children.contains(entity));
         }
+
+        components_registry::forget_entities(&entity_map, &children);
 
         for entity in children {
             if world.get_entity(entity).is_ok() {

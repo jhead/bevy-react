@@ -13,6 +13,7 @@ fn setup_app() -> (App, ReactClient) {
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, AssetPlugin::default()))
         .init_resource::<ReactRootMap>()
+        .init_resource::<crate::react::ReactEntityMap>()
         .add_systems(Update, process_react_messages);
 
     let (client, receiver) = ReactClient::new();

@@ -7,7 +7,7 @@
 use bevy::prelude::*;
 use bevy_react::{
     on_react_root_removed, process_react_messages, FocusedNode, ReactClient, ReactContext,
-    ReactMessageReceiver, ReactNode, ReactRoot, ReactRootMap,
+    ReactEntityMap, ReactMessageReceiver, ReactNode, ReactRoot, ReactRootMap,
 };
 
 const ROOT_ID: &str = "test-root";
@@ -18,6 +18,7 @@ fn setup_app() -> (App, ReactClient) {
         .add_plugins(AssetPlugin::default())
         .init_asset::<Image>()
         .init_resource::<ReactRootMap>()
+        .init_resource::<ReactEntityMap>()
         .add_systems(Update, process_react_messages);
 
     let (client, receiver) = ReactClient::new();
@@ -332,6 +333,7 @@ fn despawning_react_root_clears_map_and_mapped_nodes() {
         .add_plugins(AssetPlugin::default())
         .init_asset::<Image>()
         .init_resource::<ReactRootMap>()
+        .init_resource::<ReactEntityMap>()
         .init_resource::<FocusedNode>()
         .add_observer(on_react_root_removed)
         .add_systems(Update, process_react_messages);

@@ -9,6 +9,7 @@ use crate::{
     js::{JsEngineClient, JsEngineExtension},
     react::{
         bridge::{register_bridge_functions, ReactBridge},
+        components_registry::ReactEntityMap,
         event_queue::ReactEventQueue, hmr::ReactReloadFlag, ReactClient,
         shim::register_environment_shims,
     },
@@ -21,6 +22,7 @@ pub struct ReactJsExtension {
     event_queue: ReactEventQueue,
     bridge: ReactBridge,
     reload_flag: ReactReloadFlag,
+    entity_map: ReactEntityMap,
 }
 
 impl ReactJsExtension {
@@ -29,12 +31,14 @@ impl ReactJsExtension {
         event_queue: ReactEventQueue,
         bridge: ReactBridge,
         reload_flag: ReactReloadFlag,
+        entity_map: ReactEntityMap,
     ) -> Self {
         Self {
             client,
             event_queue,
             bridge,
             reload_flag,
+            entity_map,
         }
     }
 }
@@ -48,6 +52,7 @@ impl JsEngineExtension for ReactJsExtension {
             self.client.clone(),
             self.event_queue.clone(),
             self.reload_flag.clone(),
+            self.entity_map.clone(),
         )?;
         register_bridge_functions(context, self.bridge.clone())?;
         Ok(())
@@ -60,6 +65,7 @@ fn register_react_functions(
     react_client: ReactClient,
     event_queue: ReactEventQueue,
     reload_flag: ReactReloadFlag,
+    entity_map: ReactEntityMap,
 ) -> Result<(), JsError> {
     // __react_create_node(type: string, props_json: string) -> number
     context.register_global_callable(
@@ -241,8 +247,40 @@ fn register_react_functions(
         ),
     )?;
 
+    // __react_entity_id(nodeId) -> number | null
+    // Returns Bevy Entity::to_bits() for a React node once the ECS entity exists.
+    context.register_global_callable(
+        JsString::from("__react_entity_id"),
+        1,
+        NativeFunction::from_copy_closure_with_captures(
+            move |_this: &JsValue,
+                  args: &[JsValue],
+                  map: &ReactEntityMap,
+                  _ctx: &mut Context| { entity_id_fn(args, map) },
+            entity_map,
+        ),
+    )?;
+
     log::debug!("Registered React native functions");
     Ok(())
+}
+
+/// __react_entity_id(nodeId) -> Entity::to_bits() or null
+fn entity_id_fn(args: &[JsValue], map: &ReactEntityMap) -> JsResult<JsValue> {
+    let node_id = args
+        .first()
+        .and_then(|v| v.as_number())
+        .map(|n| n as u64)
+        .ok_or_else(|| {
+            JsError::from_opaque(JsValue::from(JsString::from(
+                "__react_entity_id expects a node id number",
+            )))
+        })?;
+
+    match map.get(node_id) {
+        Some(bits) => Ok(JsValue::from(bits as f64)),
+        None => Ok(JsValue::null()),
+    }
 }
 
 /// __react_request_focus(nodeId, rootId?)

@@ -62,6 +62,14 @@ export {
 export type { ReportErrorOptions } from "./ErrorBoundary";
 
 export {
+  entityFromBits,
+  resolveEntity,
+  useEntity,
+  useEntityRef,
+} from "./entity";
+export type { BevyHostInstance, EntityId } from "./entity";
+
+export {
   BEVY_REACT_DEVTOOLS_DEFAULT_URL,
   BEVY_REACT_DEVTOOLS_PORT,
   connectDevToolsBridge,

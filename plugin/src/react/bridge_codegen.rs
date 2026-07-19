@@ -204,9 +204,9 @@ pub fn assert_bridge_typescript_fresh(out_dir: &Path, bundle: &GeneratedBridgeTs
     }
 }
 
-/// Resolve `examples/hud/ui/src/generated` from this crate's manifest (plugin/).
+/// Resolve `packages/bridge-types/src` from this crate's manifest (plugin/).
 pub fn default_hud_generated_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/hud/ui/src/generated")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../packages/bridge-types/src")
 }
 
 fn to_pascal_case(camel: &str) -> String {

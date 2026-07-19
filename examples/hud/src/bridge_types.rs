@@ -13,7 +13,7 @@ use ts_rs::TS;
 
 /// ECS resource mirrored to React via `register_resource_store("hud")`.
 ///
-/// TypeScript is generated into `ui/src/generated/` via `ts-rs`
+/// TypeScript is generated into `packages/bridge-types/src/` via `ts-rs`
 /// (`./scripts/generate-bridge-types.sh`).
 #[derive(Resource, Clone, Serialize, TS)]
 #[ts(export_to = "PlayerStats.ts")]
@@ -68,7 +68,7 @@ pub fn apply_hud_bridge(bridge: &ReactBridge) {
 pub const PLAYER_STATS_KEYS: &[&str] = &["hp", "max_hp", "score"];
 
 pub fn hud_generated_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ui/src/generated")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/bridge-types/src")
 }
 
 pub fn hud_bridge_ts_bundle() -> GeneratedBridgeTs {

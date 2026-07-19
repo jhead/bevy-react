@@ -51,7 +51,7 @@ Named resource/query stores, Promise calls, HUD ts-rs codegen, and typed command
 - [x] Typed command return values to JS (`callNative` → Promise)
 - [x] Generated typed command wrappers (`BridgeCommandMeta` → HUD `addScore` / `heal`)
 - [x] Unified command registration (`BridgeCommandSet` / `register_typed` — meta + handler together)
-- [ ] Spread codegen beyond HUD / shared package types
+- [x] Spread codegen beyond HUD / shared package types
 
 ### 2. Host-side interaction styling + transitions — *done* (MVP)
 

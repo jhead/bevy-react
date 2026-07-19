@@ -991,7 +991,7 @@ mod tests {
     }
 
     /// JSON shape contract for HUD `PlayerStats` (keys must match
-    /// `examples/hud/ui/src/generated/` — regenerate via
+    /// `packages/bridge-types/src/` — regenerate via
     /// `./scripts/generate-bridge-types.sh`).
     #[test]
     fn player_stats_json_shape_matches_ts_contract() {

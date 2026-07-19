@@ -225,7 +225,7 @@ Enabled with the plugin feature `bridge-codegen` (pulls in [`ts-rs`](https://doc
 1. Annotate a serializable resource with `Serialize` + `ts_rs::TS` (see `examples/hud/src/bridge_types.rs`).
 2. Define commands once with [`BridgeCommandSet`] — each `.command(BridgeCommandMeta::new(…), handler)` pairs TypeScript meta with the Bevy handler.
 3. At startup call `commands.apply(&bridge)` (HUD: `apply_hud_bridge`). For codegen, pass the same set via `GeneratedBridgeTs::with_command_set`.
-4. Assert freshness in a unit test and commit `examples/hud/ui/src/generated/`. App helpers (`INITIAL_PLAYER_STATS`, `hpRatio`) stay in `hudTypes.ts` and re-export generated symbols.
+4. Assert freshness in a unit test and commit `packages/bridge-types/src/`. App helpers (`INITIAL_PLAYER_STATS`, `hpRatio`) stay in HUD `hudTypes.ts` and re-export from `bridge-types`.
 
 ```bash
 # Rewrite generated files, then verify
@@ -261,7 +261,9 @@ fn setup_bridge(bridge: Res<ReactBridge>) {
 
 #[test]
 fn generated_bridge_typescript_is_fresh() {
-    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ui/src/generated");
+    // Shared workspace package — or a path under your app's UI package.
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/bridge-types/src");
     let bundle = GeneratedBridgeTs::new()
         .with_type::<MyState>("MyState.ts")
         .with_command_set("commands.ts", &my_bridge_commands())
@@ -273,9 +275,16 @@ fn generated_bridge_typescript_is_fresh() {
 
 Enable `bevy_react` with `features = ["bridge-codegen"]` and add `ts-rs` to the app crate. Args/result TypeScript strings in [`BridgeCommandMeta`] are still written by hand (closure signatures are not reflected); the set API only removes the second copy of the command name between `register` and the meta table.
 
-### Shared package types (future)
+### Shared package (`bridge-types`)
 
-When more than one UI package needs the same generated shapes, a light next step is a small workspace package (e.g. `packages/bridge-types`) that re-exports committed `generated/` output, or a `ts-rs` export dir shared by apps — without moving codegen into the `bevy-react` npm package itself. HUD can stay the reference consumer until then.
+Generated bridge TypeScript lives in the workspace package [`packages/bridge-types`](../packages/bridge-types/). HUD (and future apps) import from there — not from a per-app `ui/src/generated/` copy:
+
+```ts
+import type { PlayerStats } from 'bridge-types'
+import { addScore, heal, PLAYER_STATS_KEYS } from 'bridge-types'
+```
+
+Add `"bridge-types": "workspace:*"` to the UI package (see `examples/hud/ui/package.json`). Codegen still runs from the HUD Rust crate; output dir is `packages/bridge-types/src/`. Additional apps can emit into the same package (namespaced filenames) or their own out dir following the same `assert_bridge_typescript_fresh` pattern.
 
 Shape tests remain: Rust serde keys in `bridge_types` tests, plus the Vitest key contract in `packages/bevy-react/tests/bridge.test.ts`.
 
@@ -291,7 +300,7 @@ Shape tests remain: Rust serde keys in `bridge_types` tests, plus the Vitest key
 | `useQuery` | Done |
 | `ts-rs` codegen + typed command wrappers (HUD) | Done |
 | Unified `BridgeCommandSet` / `register_typed` (meta + handler) | Done |
-| Shared package types beyond HUD | TODO |
+| Shared package types beyond HUD | Done (`bridge-types`) |
 ## Notes
 
 - Do not break or bypass the existing `ReactEventQueue` path; the bridge is a separate channel for app data, not UI events.

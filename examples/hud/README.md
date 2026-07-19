@@ -7,7 +7,7 @@ Binds Bevy ECS player stats into React via [`ReactBridge`](../../docs/BRIDGE.md)
 - Rust registers `PlayerStats` with `register_resource_store("hud")`
 - React reads with `useResource('hud', …)` (HP ratio derived on the TS side)
 - Buttons call typed wrappers `addScore` / `heal` (generated from Rust command metadata)
-- Shared JSON shape: `ui/src/generated/` ← `ts-rs` from `src/bridge_types.rs` (regen: `./scripts/generate-bridge-types.sh`)
+- Shared JSON shape: `bridge-types` package ← `ts-rs` from `src/bridge_types.rs` (regen: `./scripts/generate-bridge-types.sh`)
 
 ## How to run
 

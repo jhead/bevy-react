@@ -146,8 +146,11 @@ importers:
   examples/hud/ui:
     dependencies:
       bevy-react:
-        specifier: file:../../../packages/bevy-react
+        specifier: workspace:*
         version: link:../../../packages/bevy-react
+      bridge-types:
+        specifier: workspace:*
+        version: link:../../../packages/bridge-types
       react:
         specifier: ^19.2.0
         version: 19.2.0
@@ -253,6 +256,12 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3)(esbuild@0.28.1))
+
+  packages/bridge-types:
+    devDependencies:
+      bevy-react:
+        specifier: workspace:*
+        version: link:../bevy-react
 
 packages:
 

@@ -1,13 +1,14 @@
 /**
- * HUD TypeScript surface: generated Rust types + thin app helpers.
+ * HUD TypeScript surface: shared generated Rust types + thin app helpers.
  *
- * Regenerated files live in `./generated/` (`./scripts/generate-bridge-types.sh`).
+ * Generated symbols come from the `bridge-types` workspace package
+ * (`./scripts/generate-bridge-types.sh`).
  */
-export type { PlayerStats } from './generated/PlayerStats'
-export { PLAYER_STATS_KEYS } from './generated/PlayerStatsKeys'
-export { addScore, heal, type AddScoreResult, type HealResult } from './generated/commands'
+export type { PlayerStats } from 'bridge-types'
+export { PLAYER_STATS_KEYS, addScore, heal } from 'bridge-types'
+export type { AddScoreResult, HealResult } from 'bridge-types'
 
-import type { PlayerStats } from './generated/PlayerStats'
+import type { PlayerStats } from 'bridge-types'
 
 export const INITIAL_PLAYER_STATS: PlayerStats = {
   hp: 100,

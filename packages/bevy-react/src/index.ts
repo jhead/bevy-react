@@ -21,7 +21,7 @@ export * from "./types";
 // Export Bevy UI components
 export * from "./components";
 
-export { installEventDispatcher, hostDispatchEvent } from "./events";
+export { installEventDispatcher, hostDispatchEvent, requestFocus, requestBlur } from "./events";
 export type {
   HostEventPayload,
   KeyboardEventPayload,

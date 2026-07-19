@@ -90,6 +90,18 @@ declare global {
    * Drains the host event queue and invokes the registered dispatcher.
    */
   function __react_flush_events(): void;
+
+  /**
+   * Request keyboard focus for a React node (host applies focus/blur events).
+   * @param nodeId - React node id to focus
+   * @param rootId - Optional React root id; resolved from the entity tree when omitted
+   */
+  function __react_request_focus(nodeId: number, rootId?: string): void;
+
+  /**
+   * Clear keyboard focus (host emits blur for the previously focused node).
+   */
+  function __react_request_blur(): void;
 }
 
 export {};

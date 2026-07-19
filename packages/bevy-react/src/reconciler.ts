@@ -153,6 +153,8 @@ const BUBBLING_EVENTS = new Set([
   "click",
   "press",
   "release",
+  "mousemove",
+  "drag",
   "keydown",
   "keyup",
   "wheel",
@@ -210,6 +212,16 @@ function invokeHandler(
     case "mouseleave": {
       const onMouseLeave = props.onMouseLeave;
       if (typeof onMouseLeave === "function") onMouseLeave(synthetic);
+      break;
+    }
+    case "mousemove": {
+      const onMouseMove = props.onMouseMove;
+      if (typeof onMouseMove === "function") onMouseMove(synthetic);
+      break;
+    }
+    case "drag": {
+      const onDrag = props.onDrag;
+      if (typeof onDrag === "function") onDrag(synthetic);
       break;
     }
     case "wheel": {

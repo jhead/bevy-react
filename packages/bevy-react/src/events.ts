@@ -38,7 +38,7 @@ declare function __react_register_event_dispatcher(callback: EventDispatcher): v
 /**
  * Forward host events into the reconciler's per-root instance map.
  * Event type names match what Rust enqueues: click, press, release, focus, blur,
- * mouseenter, mouseleave, keydown, keyup, wheel, scroll.
+ * mouseenter, mouseleave, mousemove, drag, keydown, keyup, wheel, scroll.
  */
 export function hostDispatchEvent(
   rootId: string,
@@ -62,4 +62,27 @@ export function installEventDispatcher(): void {
   }
 
   __react_register_event_dispatcher(hostDispatchEvent);
+}
+
+/**
+ * Request keyboard focus for a node via the host bridge.
+ * Prefer this over relying on pointer press when focusing programmatically.
+ */
+export function requestFocus(nodeId: number, rootId?: string): void {
+  if (typeof __react_request_focus !== "function") {
+    console.warn("[bevy-react] __react_request_focus is not available yet");
+    return;
+  }
+  __react_request_focus(nodeId, rootId);
+}
+
+/**
+ * Clear keyboard focus via the host bridge.
+ */
+export function requestBlur(): void {
+  if (typeof __react_request_blur !== "function") {
+    console.warn("[bevy-react] __react_request_blur is not available yet");
+    return;
+  }
+  __react_request_blur();
 }

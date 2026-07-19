@@ -138,6 +138,16 @@ export interface BevyStyle {
 export interface NodeProps {
   style?: BevyStyle;
   children?: ReactNode;
+  onClick?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onPress?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onRelease?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onHover?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onMouseEnter?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onMouseLeave?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onMouseMove?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onDrag?: (event?: PointerSyntheticEvent | PointerEventData) => void;
+  onWheel?: (event?: WheelSyntheticEvent | WheelEventData) => void;
+  onScroll?: (event?: ScrollSyntheticEvent | ScrollEventData) => void;
 }
 
 /**
@@ -202,16 +212,7 @@ export type ScrollSyntheticEvent = ScrollEventData & SyntheticEventExtras;
 /**
  * Props for the <button> element (ButtonBundle with interaction)
  */
-export interface ButtonProps extends NodeProps {
-  onClick?: (event?: PointerSyntheticEvent | PointerEventData) => void;
-  onPress?: (event?: PointerSyntheticEvent | PointerEventData) => void;
-  onRelease?: (event?: PointerSyntheticEvent | PointerEventData) => void;
-  onHover?: (event?: PointerSyntheticEvent | PointerEventData) => void;
-  onMouseEnter?: (event?: PointerSyntheticEvent | PointerEventData) => void;
-  onMouseLeave?: (event?: PointerSyntheticEvent | PointerEventData) => void;
-  onWheel?: (event?: WheelSyntheticEvent | WheelEventData) => void;
-  onScroll?: (event?: ScrollSyntheticEvent | ScrollEventData) => void;
-}
+export interface ButtonProps extends NodeProps {}
 
 /**
  * Props for the internal <bevy-text-input> element (focusable container)
@@ -221,8 +222,6 @@ export interface TextInputInternalProps extends NodeProps {
   onBlur?: () => void;
   onKeyDown?: (event: KeyboardSyntheticEvent | KeyboardEventData) => void;
   onKeyUp?: (event: KeyboardSyntheticEvent | KeyboardEventData) => void;
-  onWheel?: (event?: WheelSyntheticEvent | WheelEventData) => void;
-  onScroll?: (event?: ScrollSyntheticEvent | ScrollEventData) => void;
 }
 
 /**

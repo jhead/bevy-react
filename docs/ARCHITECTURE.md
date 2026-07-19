@@ -75,10 +75,11 @@ Conditional compilation swaps clocks, threading, and tokio features for `wasm32`
 
 ## Current limitations (high level)
 
-Accurate for today; details in [PROJECT_PLAN.md](PROJECT_PLAN.md):
+Foundation (render, styles, events, multi-root, examples) is in place; remaining gaps are roadmap-driven — details in [PROJECT_PLAN.md](PROJECT_PLAN.md):
 
-- Unmount / destroy paths are incomplete (entity leaks possible).
-- Style contracts between TS and Rust have drifted in places.
-- Multiple simultaneous React roots are not fully supported on the TS side.
-- No full example crate yet for HUD/game-state binding (API exists — see [BRIDGE.md](BRIDGE.md)).
+- Game-state bridge is minimal/`ReactBridge` channels, not typed stores + codegen ([BRIDGE.md](BRIDGE.md)).
+- Interaction styling and transitions are still JS-side (`useInteraction`), not host-applied from Bevy `Interaction`.
+- Widgets are compositional TS; host `bevy_ui_widgets` mapping is incomplete.
+- No public ECS escape hatch (`ref` → `Entity`, named bundle attach).
+- Runtime errors log via `JsRuntimeError`; no in-game overlay / style diagnostics yet.
 - Packages are unpublished; treat as path-dependency only.

@@ -10,7 +10,7 @@ Build UI for your [Bevy](https://bevy.org/) app using React. A custom React rend
 
 ## Current Status
 
-Early prototype — **don't use this in production yet.** Core render/input plumbing works (see the [demo](examples/demo/)), but correctness, events, and WASM gaps remain. Track progress in [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md).
+Early prototype — **don't use this in production yet.** Core render/input/examples work (see the [demo](examples/demo/)). Next focus is the typed bridge, host-side interaction styling, and Bevy widgets — not more epic polish on the old foundation. Track progress in [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md).
 
 | Package | Version | Registry |
 |---|---|---|
@@ -40,7 +40,7 @@ See [docs/EXAMPLES.md](docs/EXAMPLES.md) for run instructions.
 | [Examples](docs/EXAMPLES.md) | Demo, menu, forms, HUD |
 | [Demo smoke](docs/DEMO_SMOKE.md) | Manual checklist + automated smoke script |
 | [Bevy Version](docs/BEVY_VERSION.md) | Support policy + version matrix |
-| [Project Plan](docs/PROJECT_PLAN.md) | Roadmap / epics |
+| [Project Plan](docs/PROJECT_PLAN.md) | Bridge-first roadmap |
 | [Contributing](CONTRIBUTING.md) | How to contribute |
 | [Changelog](CHANGELOG.md) | Release notes |
 

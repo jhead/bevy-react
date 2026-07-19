@@ -4,7 +4,7 @@ Thanks for interest in `bevy-react`. The project is early and moving quickly; pl
 
 ## Status
 
-This is an active prototype. Please treat the public API as unstable. The roadmap lives in [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) — prefer aligning work with open epics (especially correctness, events, and WASM) over drive-by polish.
+This is an active prototype. Please treat the public API as unstable. The roadmap lives in [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) — prefer aligning with the bridge-first priority stack (typed game-state bridge, host-side interaction styling, Bevy headless widgets) over drive-by polish.
 
 ## Development setup
 
@@ -50,7 +50,7 @@ cargo run --manifest-path examples/demo/Cargo.toml
 
 ## Guidelines
 
-- Prefer small, focused changes with a clear epic link when possible.
+- Prefer small, focused changes with a clear roadmap priority link when possible.
 - Match existing style; don't add drive-by refactors.
 - Don't leave dead code behind when replacing behavior.
 - Avoid unnecessary fallback / silent-error paths — fail clearly when contracts break.
@@ -60,7 +60,7 @@ cargo run --manifest-path examples/demo/Cargo.toml
 ## Pull requests
 
 1. Describe the problem and the approach.
-2. Note which epic (if any) the change advances.
+2. Note which roadmap priority (if any) the change advances.
 3. Include how you tested (unit test, demo click-through, WASM build, etc.).
 
 ## License

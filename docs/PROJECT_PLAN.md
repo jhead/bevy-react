@@ -1,102 +1,103 @@
 # PROJECT_PLAN
 
-Living roadmap for bevy-react. Items marked `[x]` landed on `main` (verify + iterate as needed).
+Living roadmap for bevy-react. The priority stack below guides new work. Parallel agents may land slices of open items — check `main` before starting.
 
-## Assessment
+**One-liner:** React Native for Bevy — invest in the bridge (state, types, styling authority), not the widget set.
 
-The core architecture is sound and works end-to-end: Boa runs React on a worker thread (native) or main thread (WASM), a custom reconciler ships mutations over an RPC enum, and Bevy systems materialize entities. Early prototype status remains accurate for production use, but several structural blockers are closed: entity destroy on unmount, native structured event dispatch (no eval), WASM budgeted job pump (`ContextGate`, no leak/future-transmute), multi-root TS containers + instance maps, root teardown on `ReactRoot` despawn, borderWidth sync, and basic CI/tests/docs.
+## Shipped foundation
 
-Remaining gaps: full React/Vite counter bundle e2e still open (Boa host-API smoke in `plugin/tests/boa_smoke.rs` covers entity tree + synthesized click). Texture atlas indexing still TODO. A minimal Rust↔React data bridge (`ReactBridge` / [BRIDGE.md](BRIDGE.md)) powers the HUD example. Consumer polish landed: `fontFamily` asset paths + optional default font handles, and `pointerEvents` pass-through for transparent HUD roots.
+The early epic checklist (render pipeline, styles, events, compositional widgets, runtime/HMR, CI) is largely done. Treat it as historical context, not the backlog.
 
-## Epic 1: Correctness of the render pipeline
+| Area | What works |
+|---|---|
+| **Render pipeline** | Create/update/destroy nodes, multi-root containers, root teardown on `ReactRoot` despawn, deep-diff updates, recursive unmount/despawn |
+| **Styles** | Layout (flex/grid), shorthands, colors, text/`fontFamily`, opacity/shadows/gradients, images (`objectFit`, nine-slice), `pointerEvents` |
+| **Events** | Native event queue (no `eval`), click/press/release, keys/modifiers, wheel/scroll, focus, bubbling, pointer-move/drag |
+| **Widgets** | Compositional TS: TextInput, ScrollView, Checkbox, Slider, Select, ProgressBar, Portal; `useInteraction` |
+| **Bridge (minimal)** | `ReactBridge` channels + HUD example ([BRIDGE.md](BRIDGE.md)) — stringly, not typed stores |
+| **Runtime / loading** | WASM job pump, fetch/console, production bundle + Vite HMR, graceful shutdown |
+| **Examples / CI** | demo, menu, forms, HUD; smoke tests; `.github/workflows/ci.yml` |
+| **Docs** | Getting started, style props, architecture, bridge, contributing, changelog |
 
-- [x] Fix entity leak: call `__react_destroy_node` from `removeChild`/`detachDeletedInstance` and despawn descendants recursively.
-- [x] Fix `handle_update_node` for text nodes: update `TextColor`/`TextFont` on update and stop inserting layout `Node`/`BackgroundColor` onto `Text` entities.
-- [x] Remove stale components on update: clearing `backgroundColor`/`borderColor`/`zIndex`/`borderRadius` from props removes the component.
-- [x] Reconcile TS `BevyStyle` with Rust `StyleProps` for `borderWidth` (Rust accepts alias). Shared-schema sync test still TODO.
-- [x] Deep-compare props/`style` before update RPC (`commitUpdate` diffs; skip when unchanged).
-- [x] Support multiple simultaneous roots: per-root fiber containers in TS (`roots.ts`; drop the global `fiberRoot`) and per-root instance maps.
-- [x] Handle root teardown: despawning a `ReactRoot` entity should unmount the React tree and clean `ReactRootMap`/JS state.
-- [x] Replace `unwrap()`/`expect()` in engine and message paths (~16 sites) with logged error recovery so bad JS can't kill the thread.
+Useful verification notes (still valid):
 
-## Epic 2: Style system completeness
+- Headless Boa host-API smoke: `plugin/tests/boa_smoke.rs` (entity tree + synthesized click). Full React/Vite counter bundle e2e still optional.
+- Message-handling tests: destroy-subtree, clear-component-on-update, double-destroy idempotent (`plugin/tests/message_handling.rs`).
+- Manual + scripted demo smoke: [DEMO_SMOKE.md](DEMO_SMOKE.md), `scripts/demo-smoke.sh`.
+- Bevy pin: **0.17.3** ([BEVY_VERSION.md](BEVY_VERSION.md)).
+- Leftovers from the old epics (not roadmap drivers): texture atlas indexing; optional criterion micro-bench; gamepad/`bevy_input_focus` TabGroup; OS clipboard; ScrollView scrollbar polish; crates.io/npm publish.
 
-- [x] Add missing layout props: `aspectRatio`, per-axis `overflowX/Y`, `overflowClipMargin`, and full CSS Grid props (`gridTemplateColumns/Rows`, `gridRow/Column`, etc. — `display: grid` parses but is unusable).
-- [x] Support 4-value/2-value shorthands for `margin`/`padding`/`borderRadius` ("8px 16px").
-- [x] Extend `parse_color`: full CSS named-color table, `hsl()/hsla()`, and shorthand `rgb(0 0 0 / 0.5)` syntax.
-- [x] Per-corner border radius and per-side border colors.
-- [x] Text styling: `fontFamily` via Bevy font assets, `textAlign`/`JustifyText`, `lineHeight`, `lineBreak` → `TextLayout`, and `textShadow` → `TextShadow` wired in `apply_text_style*`. Optional `ReactDefaultFont` / `ReactRootFont` when `fontFamily` is unset (Bevy subset tofu documented).
-- [x] `pointerEvents: "none" | "auto"` → `Pickable` + `FocusPolicy` so full-screen transparent HUD roots pass clicks to the world.
-- [x] Add `opacity`, `boxShadow`, and `BackgroundGradient` support (Bevy 0.17 has these). Wired in `apply_visual_style*`; opacity multiplies into colors (no Bevy `UiOpacity`).
-- [x] Image props: `objectFit` (ImageNode scale modes), tint color, and nine-slice via `imageSlice` (`NodeImageMode::Sliced`). (Texture atlas indexing still TODO.)
+### Conscious non-takes
 
-## Epic 3: Event system
+No XAML/XML markup, no two-way data binding, no full browser, no IMGUI architecture.
 
-- [x] Replace `eval`-based dispatch with a native event queue + registered JS callback (`ReactEventQueue` / `__react_flush_events`).
-- [x] Dispatch distinct `onPress`/`onRelease` plus click with cursor position data. (Click fires on release-within-bounds, DOM-style; press/release stay distinct.)
-- [x] Add keyup, key modifiers (shift/ctrl/alt), and logical `Key` (TextInput no longer uses US-layout `keyCodeToChar`).
-- [x] Add wheel/scroll events and wire `overflow: scroll` to `ScrollPosition` (lazy `ScrollPosition` insert on wheel; HoverMap + ancestor walk).
-- [x] Proper focus management: Tab/arrow navigation, click-outside blur, Bevy `RequestReactFocus`/`RequestReactBlur`, and JS `__react_request_focus`/`__react_request_blur`.
-- [x] Event bubbling/propagation semantics (`stopPropagation` on bubbled click/press/release/key/wheel/scroll via `parentId` chain).
-- [x] Pointer-move / drag: host emits `mousemove` and `drag` (while pressed) with cursor payload for Slider/ScrollView.
-- [x] `FocusedNode.root_id` (renamed from `module_name`); multi-window cursor resolved via the UI node's target camera window.
-- [ ] Gamepad/directional UI navigation (skipped for now — `bevy_input_focus` needs TabGroup/`InputFocus` integration beyond current `Focusable`/`Button` tab order).
+---
 
-## Epic 4: Built-in components
+## Priority stack (source of truth)
 
-- [x] Real `TextInput`: cursor position/blinking, Shift+arrow selection, Home/End/arrow editing, in-process Ctrl/Cmd+C/X/V/A clipboard, IME-safe entry via logical keys. (System/OS clipboard bridge still TODO.)
-- [x] `ScrollView` primitive (`overflow: scroll`; scrollbar/drag still TODO).
-- [x] `Checkbox`, `Slider`, `Select/Dropdown`, `ProgressBar` primitives (compositional; Slider step-only, no track drag).
-- [x] `useInteraction` hook for hover/pressed (pressed depends on host press/release — now wired).
-- [x] `Portal` overlay primitive (same-tree absolute; not true portal / `GlobalZIndex` yet).
+Ranked by DX leverage. Checklist items are new work (`[ ]`). Status reflects a codebase audit — update when slices land.
 
-## Epic 5: JS runtime robustness
+### 1. Typed game-state bridge — *partial*
 
-- [x] Fix WASM async: budgeted `FrameJobExecutor` pumps promises/timers each Bevy frame (no `block_on` hang).
-- [x] Finish the timer shims: delete dead `timers`/`schedule_interval` in `shim.rs` (boa_runtime timers already drained).
-- [x] Provide `fetch` to app code (not just the module loader) behind the `fetch` feature.
-- [x] Forward JS `console.*` and uncaught errors/rejections into Rust `log` with source/stack info.
-- [x] Graceful engine shutdown on `AppExit`; native JS thread panic recovery rebuilds the Boa context and re-registers extensions.
-- [x] Route `render()`/module-load failures to a visible Bevy-side error state (`JsRuntimeError` resource; also fed by `console.error` / uncaught rejections / script+module failures).
+Manual `ReactBridge` channels exist; not a typed, subscribable store layer.
 
-## Epic 6: Production loading & HMR
+- [ ] Rust: register resources / components / queries as subscribable stores
+- [ ] Per-frame batched dirty notifications (not ad-hoc publish forever)
+- [ ] TS: `useResource` / `useQuery` selector hooks
+- [ ] Codegen TS types from Rust (ts-rs / specta)
+- [ ] Typed command events back to Rust
 
-- [x] Production path: load a prebuilt JS bundle through Bevy's `AssetServer` (works on WASM and with packed assets), with an `include_str!` embed option.
-- [x] Verify/finish the HMR loop: WebSocket update messages must re-trigger module reload and re-render (re-set `ReactDirtyFlag`), not just connect.
-- [x] Auto-detect dev vs. release (Vite in debug builds, bundle in release) with one API.
-- [x] Set `NODE_ENV=production` and use React production builds outside dev (shim hardcodes `development`).
-- [x] Document and template the app-side build (Vite config that outputs a single ESM bundle without DOM assumptions).
+### 2. Host-side interaction styling + transitions — *none*
 
-## Epic 7: Quality, testing, CI
+JS keeps `onClick` and friends; visual interaction state moves to the host.
 
-- [x] Rust unit tests for `style.rs` coverage (shorthands, grid, colors, shadows/gradients, flex/gap, text/image helpers in `style.rs` `#[cfg(test)]`). Message-handling: headless `App` + `MinimalPlugins` driving `ReactClientProto` — see `plugin/tests/message_handling.rs` and `react/message_tests.rs`.
-- [x] TS tests for the reconciler host config (mock `__react_*` globals; mount/unmount, update, reorder/`insert_before`, destroy, list shuffle + duplicate destroy).
-- [x] Epic A verification: destroy-subtree, backgroundColor clear→remove component, double-destroy idempotent (Rust); list shuffle removeChild+detachDeletedInstance duplicate destroy (TS).
-- [x] End-to-end smoke: headless Bevy + real Boa host API (`plugin/tests/boa_smoke.rs`) builds a counter-like tree and asserts ECS + synthesized click. (Full React/Vite bundle still out of scope — see test module docs.)
-- [x] WASM CI build + native test + lint + `pnpm build`/`pnpm test` pipeline (`.github/workflows/ci.yml`; wasm uses `--no-default-features --features fetch`).
-- [x] Demote the per-message `log::info!` spam to `trace`/`debug` in `systems/render.rs`.
-- [ ] Benchmark and optimize the hot path (skipped for now; optional tiny criterion later).
+- [ ] `style={{ hover, pressed, focused }}` applied in Rust from Bevy `Interaction`
+- [ ] Host-side transitions / tweens for those states
 
-## Epic 8: API polish & release
+### 3. Bevy 0.17 headless widgets — *partial*
 
-- [ ] Publish `bevy_react` to crates.io and `bevy-react` to npm with locked version pairing.
-- [x] Write real docs: README rewrite, getting-started, supported style props table, architecture notes, CONTRIBUTING, CHANGELOG. (rustdoc still thin.)
-- [x] Ship 2–3 more examples: menu, forms/settings, and HUD with game-state binding (`examples/menu`, `examples/forms`, `examples/hud`).
-- [x] Rust↔React data bridge: a supported way to push game state into React (context/store fed from ECS) and call registered Rust functions from JS.
-- [x] Bevy version support policy and tracking matrix ([BEVY_VERSION.md](BEVY_VERSION.md); pinned to 0.17.3).
-- [x] License/repo hygiene: changelog, contribution guide; repository URL OK. Keep non-production warning until publish.
+Compositional TS widgets work; host mapping to `bevy_ui_widgets` is the direction (not more JS interaction reimplementation).
 
-Rough priority for remaining work: Epic 2 atlas indexing leftovers → optional criterion micro-bench → publish. Epic A interactive checklist: [DEMO_SMOKE.md](DEMO_SMOKE.md).
+- [ ] Feature-gate `experimental_bevy_ui_widgets`
+- [ ] Map Button / Slider / Checkbox to host-side `bevy_ui_widgets`
+- [ ] Delete TS-reimplemented interaction logic as host widgets land
+- [ ] Keep thin React wrappers that compose host behavior
 
-### Consumer blockers (closed)
+### 4. ECS escape hatch — *stub*
 
-- [x] Font control: `fontFamily` asset paths end-to-end; default FiraMono-subset tofu documented; optional `ReactDefaultFont` / `ReactRootFont`; Slider step labels use ASCII `+/-`.
-- [x] Pointer pass-through: `pointerEvents` style → Bevy picking/`FocusPolicy` for HUD-over-world clicks.
+Private `node_id` → `Entity` map exists; not a public API.
 
-## Verification backlog (Epic A — from mid-stream review)
+- [ ] Stable `ref` → `Entity` handle for consumers
+- [ ] `<Node components={[...]}>` with Rust bundles registered by name
 
-- [x] `cargo clippy -D warnings`, full `cargo test`, `tsc`, vitest green on every commit
-- [x] FrameJobExecutor: eliminate `Box::leak` + future `transmute` via `ContextGate` in `builder.rs` (attach/detach raw pointer; layout-reinterpret `RefCell` only; drop pending jobs if Context address changes)
-- [x] Manual demo smoke checklist + automated build/RPC smoke (`docs/DEMO_SMOKE.md`, `scripts/demo-smoke.sh`)
-- [x] Headless `ReactClientProto` tests: destroy-subtree, clear-component-on-update, double-destroy idempotent (`react/message_tests.rs` + `plugin/tests/message_handling.rs`)
-- [x] Reorder-heavy list updates: destroy stays silent when both `removeChild` and `detachDeletedInstance` fire (vitest)
+### 5. Fail loudly in-game — *partial*
+
+`JsRuntimeError` resource + logs exist; no player-visible overlay or style diagnostics.
+
+- [ ] In-game error overlay
+- [ ] Warnings for unsupported style props
+- [ ] Source-mapped stacks in the overlay / logs
+
+### 6. Devtools over designer tools — *stub*
+
+`injectIntoDevTools` call only. Skip a visual designer.
+
+- [ ] React DevTools over WebSocket
+- [ ] bevy-egui inspector for node ↔ entity mapping
+- [ ] Component gallery (examples of supported primitives/styles)
+
+### 7. Binary op protocol — *none* (later)
+
+Fabric-style binary ops. Only after priorities **1–2**; required before calling the stack "production ready".
+
+- [ ] Design / `proto/` schema for batched binary mutations
+- [ ] Replace or sit beside today's in-process enum RPC
+
+---
+
+## How to contribute against this plan
+
+1. Prefer open items in **1 → 2 → 3** unless you are extending something already shipping.
+2. Note which priority (and checklist item) a PR advances.
+3. Parallel work: keep file ownership disjoint; rebase if push races.
+4. Verification baselines above stay green — don't regress destroy/update/smoke paths while adding bridge/styling features.

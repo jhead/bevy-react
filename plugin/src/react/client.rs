@@ -17,7 +17,7 @@ unsafe impl Trace for ReactClient {
 }
 
 /// RPC Protocol messages from JS React reconciler to Bevy
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReactClientProto {
     /// Create a UI node (NodeBundle, ButtonBundle, etc.)
     CreateNode {
@@ -200,5 +200,17 @@ impl ReactClient {
     /// Signal completion
     pub fn complete(&self) {
         self.send(ReactClientProto::Complete);
+    }
+
+    /// Decode a BRRP binary batch and enqueue the resulting RPC messages.
+    ///
+    /// Used by the `binary_ops` feature path (`__react_commit_ops`). The existing
+    /// per-op native functions remain the default dual path.
+    pub fn commit_binary_ops(&self, bytes: &[u8]) -> Result<(), crate::react::proto::DecodeError> {
+        let msgs = crate::react::proto::decode_protos(bytes)?;
+        for msg in msgs {
+            self.send(msg);
+        }
+        Ok(())
     }
 }

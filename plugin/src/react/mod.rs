@@ -38,6 +38,8 @@ pub mod plugin;
 
 mod asset_source;
 mod bridge;
+#[cfg(feature = "bridge-codegen")]
+pub mod bridge_codegen;
 mod client;
 pub mod components_registry;
 #[cfg(any(feature = "devtools", feature = "egui"))]
@@ -46,6 +48,7 @@ mod embedded;
 mod event_queue;
 mod hmr;
 mod native_functions;
+pub mod proto;
 mod style;
 mod systems;
 mod vite;
@@ -65,6 +68,12 @@ pub use bridge::{
     BridgeCall, BridgeCallResult, ReactBridge, flush_react_bridge,
     process_react_bridge_calls, sync_registered_query_stores,
     sync_registered_resource_stores,
+};
+#[cfg(feature = "bridge-codegen")]
+pub use bridge_codegen::{
+    BridgeCommandMeta, GeneratedBridgeTs, assert_bridge_typescript_fresh, default_hud_generated_dir,
+    emit_command_wrappers, emit_object_keys_const, emit_type_decl, sync_bridge_typescript,
+    write_bridge_typescript,
 };
 pub use client::*;
 pub use components_registry::{

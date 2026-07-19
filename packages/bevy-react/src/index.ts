@@ -85,6 +85,14 @@ export type {
   DevToolsSnapshot,
 } from "./devtools";
 
+export {
+  BRRP_FLAG_STRING_TABLE,
+  BRRP_MAGIC,
+  BRRP_VERSION,
+  encodeBatchStub,
+  OpCode,
+} from "./protocol";
+
 export interface BevyReactApp {
   render: (rootId: string) => void;
   dispatchEvent: typeof dispatchEvent;

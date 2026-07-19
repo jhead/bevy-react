@@ -100,6 +100,12 @@ declare global {
   function __react_clear_container(rootId: string): void;
 
   /**
+   * Commit one BRRP binary batch (host built with `--features binary_ops`).
+   * Decodes into the same ReactClientProto channel as the per-op natives.
+   */
+  function __react_commit_ops(bytes: Uint8Array | ArrayBuffer): void;
+
+  /**
    * Registers a callback the host invokes when draining the React event queue.
    */
   function __react_register_event_dispatcher(

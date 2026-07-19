@@ -88,12 +88,15 @@ Skip a visual designer. Full standalone React DevTools protocol still future wor
 - [x] Optional bevy-egui inspector for node ↔ entity mapping (`egui` / `devtools-full` features)
 - [x] Component gallery example (`examples/gallery`)
 
-### 7. Binary op protocol — *none* (later)
+### 7. Binary op protocol — *partial* (MVP codec)
 
-Fabric-style binary ops. Only after priorities **1** deepen (queries/codegen); required before calling the stack "production ready".
+Fabric-style binary ops. Schema + Rust round-trip codec landed; reconciler still uses enum natives by default.
 
-- [ ] Design / `proto/` schema for batched binary mutations
-- [ ] Replace or sit beside today's in-process enum RPC
+- [x] Design / `plugin/src/react/proto/` schema for batched binary mutations ([PROTO.md](PROTO.md))
+- [x] Sit beside today's in-process enum RPC (`binary_ops` → `__react_commit_ops`)
+- [ ] TS reconciler encodes commits into BRRP (stub: `packages/bevy-react/src/protocol.ts`)
+- [ ] Optional string-table interning (`FLAG_STRING_TABLE`)
+- [ ] Make binary the default hot path once TS encoder + soak tests land
 
 ---
 

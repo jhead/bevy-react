@@ -36,6 +36,7 @@ See [docs/EXAMPLES.md](docs/EXAMPLES.md) for run instructions.
 | [Style Props](docs/STYLE_PROPS.md) | Supported CSS-like style properties |
 | [Architecture](docs/ARCHITECTURE.md) | How the two-runtime bridge works |
 | [Data Bridge](docs/BRIDGE.md) | Push ECS state into React / call Rust from JS |
+| [Binary Protocol](docs/PROTO.md) | BRRP batched mutation frames (beside enum RPC) |
 | [DevTools](docs/DEVTOOLS.md) | Debug WS bridge + node↔Entity inspector |
 | [Boa Compat](docs/BOA_COMPAT.md) | JS APIs that work / are shimmed / missing in Boa |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | In-game error overlay, stacks, source maps |

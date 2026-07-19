@@ -261,6 +261,22 @@ fn register_react_functions(
         ),
     )?;
 
+    #[cfg(feature = "binary_ops")]
+    {
+        // __react_commit_ops(bytes: Uint8Array | ArrayBuffer) -> void
+        // Dual path: one BRRP frame → many ReactClientProto messages.
+        context.register_global_callable(
+            JsString::from("__react_commit_ops"),
+            1,
+            NativeFunction::from_copy_closure_with_captures(
+                move |_this: &JsValue, args: &[JsValue], client: &ReactClient, ctx: &mut Context| {
+                    commit_ops_fn(args, client, ctx)
+                },
+                react_client.clone(),
+            ),
+        )?;
+    }
+
     log::debug!("Registered React native functions");
     Ok(())
 }
@@ -581,5 +597,75 @@ fn clear_container_fn(
         .unwrap_or_else(|| "root".to_string());
 
     client.clear_container(root_id);
+    Ok(JsValue::undefined())
+}
+
+/// __react_commit_ops(bytes: Uint8Array | ArrayBuffer)
+#[cfg(feature = "binary_ops")]
+fn commit_ops_fn(
+    args: &[JsValue],
+    client: &ReactClient,
+    ctx: &mut Context,
+) -> JsResult<JsValue> {
+    use boa_engine::object::builtins::{JsArrayBuffer, JsTypedArray};
+
+    let obj = args
+        .first()
+        .and_then(|v| v.as_object())
+        .ok_or_else(|| {
+            JsError::from_opaque(JsValue::from(JsString::from(
+                "__react_commit_ops expects a Uint8Array or ArrayBuffer",
+            )))
+        })?;
+
+    let bytes = if let Ok(buf) = JsArrayBuffer::from_object(obj.clone()) {
+        buf.data()
+            .map(|d| d.to_vec())
+            .ok_or_else(|| {
+                JsError::from_opaque(JsValue::from(JsString::from(
+                    "__react_commit_ops: ArrayBuffer is detached",
+                )))
+            })?
+    } else {
+        let typed = JsTypedArray::from_object(obj).map_err(|_| {
+            JsError::from_opaque(JsValue::from(JsString::from(
+                "__react_commit_ops expects a Uint8Array or ArrayBuffer",
+            )))
+        })?;
+        let byte_length = typed.byte_length(ctx)?;
+        let byte_offset = typed.byte_offset(ctx)?;
+        let buffer_val = typed.buffer(ctx)?;
+        let buffer_obj = buffer_val.as_object().ok_or_else(|| {
+            JsError::from_opaque(JsValue::from(JsString::from(
+                "__react_commit_ops: TypedArray buffer missing",
+            )))
+        })?;
+        let buf = JsArrayBuffer::from_object(buffer_obj.clone()).map_err(|_| {
+            JsError::from_opaque(JsValue::from(JsString::from(
+                "__react_commit_ops: TypedArray buffer is not an ArrayBuffer",
+            )))
+        })?;
+        let data = buf.data().ok_or_else(|| {
+            JsError::from_opaque(JsValue::from(JsString::from(
+                "__react_commit_ops: ArrayBuffer is detached",
+            )))
+        })?;
+        let end = byte_offset
+            .checked_add(byte_length)
+            .filter(|e| *e <= data.len())
+            .ok_or_else(|| {
+                JsError::from_opaque(JsValue::from(JsString::from(
+                    "__react_commit_ops: TypedArray view out of bounds",
+                )))
+            })?;
+        data[byte_offset..end].to_vec()
+    };
+
+    client.commit_binary_ops(&bytes).map_err(|e| {
+        JsError::from_opaque(JsValue::from(JsString::from(format!(
+            "__react_commit_ops decode failed: {e:?}"
+        ))))
+    })?;
+
     Ok(JsValue::undefined())
 }

@@ -21,12 +21,16 @@ serde = "1.0.228"
 serde_json = "1.0.145"
 sourcemap = "9.3.2"
 url = "2.5.7"
+base64 = "0.22"
 
 # Used by the app-level `fetch` Fetcher (JsResponse builder).
 http = { version = "1", optional = true }
 
 # Optional entity-mapping inspector (`egui` feature).
 bevy_egui = { version = "0.38", optional = true }
+
+# Optional TypeScript codegen from Rust types (`bridge-codegen` feature).
+ts-rs = { version = "12.0", optional = true, default-features = true }
 
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -52,3 +56,8 @@ devtools = ["websocket"]
 egui = ["dep:bevy_egui"]
 # Convenience: debug bridge + inspector together.
 devtools-full = ["devtools", "egui"]
+# Emit TypeScript from Rust bridge types + command metadata (ts-rs).
+bridge-codegen = ["dep:ts-rs"]
+# Dual-path binary mutation batches (`__react_commit_ops` + BRRP codec).
+# Enum RPC remains default; see docs/PROTO.md.
+binary_ops = []

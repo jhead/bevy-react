@@ -1,12 +1,11 @@
 import type { ReactNode } from "react";
 import type { BevyStyle } from "../types";
-import { Button, Node, Text } from "./Intrinsics";
-import { useInteraction } from "../hooks/useInteraction";
+import { Node, Text } from "./Intrinsics";
 
 export interface CheckboxProps {
   /** Controlled checked state */
   checked: boolean;
-  /** Called when the user toggles the checkbox */
+  /** Called when the host checkbox emits ValueChange */
   onChange: (checked: boolean) => void;
   /** Optional label rendered to the right of the box */
   label?: string;
@@ -18,7 +17,9 @@ export interface CheckboxProps {
 }
 
 /**
- * Toggle checkbox built from Button + Node + Text host primitives.
+ * Toggle checkbox mapped to Bevy's headless `ui_widgets::Checkbox`.
+ *
+ * Host owns click / keyboard toggle; React supplies the box look and checkmark.
  */
 export function Checkbox({
   checked,
@@ -29,8 +30,6 @@ export function Checkbox({
   boxStyle,
   labelStyle,
 }: CheckboxProps): ReactNode {
-  const { hovered, pressed, handlers } = useInteraction();
-
   const rowStyle: BevyStyle = {
     flexDirection: "row",
     alignItems: "center",
@@ -44,32 +43,32 @@ export function Checkbox({
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: hovered ? "#8a8aff" : "#6a6a7a",
-    backgroundColor: checked
-      ? pressed
-        ? "#4a4aff"
-        : "#5a5aff"
-      : pressed
-        ? "#3a3a4a"
-        : "#2a2a3a",
+    borderColor: "#6a6a7a",
+    backgroundColor: checked ? "#5a5aff" : "#2a2a3a",
     ...boxStyle,
   };
 
   return (
     <Node style={rowStyle}>
-      <Button
-        {...handlers}
+      <bevy-checkbox
+        checked={checked}
+        disabled={disabled}
         style={box}
-        onClick={() => {
-          if (!disabled) {
-            onChange(!checked);
+        onChange={(event) => {
+          if (disabled) return;
+          const next =
+            event && typeof event === "object" && "value" in event
+              ? Boolean((event as { value: boolean }).value)
+              : Boolean(event);
+          if (next !== checked) {
+            onChange(next);
           }
         }}
       >
         {checked ? (
           <Text style={{ fontSize: 14, color: "#ffffff" }}>✓</Text>
         ) : null}
-      </Button>
+      </bevy-checkbox>
       {label != null && label !== "" ? (
         <Text style={{ fontSize: 16, color: "#ffffff", ...labelStyle }}>
           {label}

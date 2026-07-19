@@ -2,6 +2,7 @@ import Reconciler from "react-reconciler";
 import type {
   BevyInstance,
   BevyTextInstance,
+  ChangeEventData,
   KeyboardEventData,
   PointerEventData,
   ScrollEventData,
@@ -191,6 +192,7 @@ type HostEventData =
   | PointerEventData
   | WheelEventData
   | ScrollEventData
+  | ChangeEventData
   | null
   | undefined;
 
@@ -278,6 +280,16 @@ function invokeHandler(
     case "scroll": {
       const onScroll = props.onScroll;
       if (typeof onScroll === "function") onScroll(synthetic);
+      break;
+    }
+    case "change": {
+      const onChange = props.onChange;
+      if (typeof onChange === "function") onChange(synthetic);
+      break;
+    }
+    case "input": {
+      const onInput = props.onInput;
+      if (typeof onInput === "function") onInput(synthetic);
       break;
     }
   }

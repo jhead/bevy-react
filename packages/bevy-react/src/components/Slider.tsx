@@ -1,15 +1,15 @@
 import type { ReactNode } from "react";
 import type { BevyStyle } from "../types";
-import { Button, Node, Text } from "./Intrinsics";
+import { Node, Text } from "./Intrinsics";
 
 export interface SliderProps {
   /** Current value in [min, max] */
   value: number;
-  /** Called when value changes */
+  /** Called when the host slider emits ValueChange */
   onChange: (value: number) => void;
   min?: number;
   max?: number;
-  /** Step size for +/- controls (default 1) */
+  /** Keyboard / track step size (default 1) */
   step?: number;
   /** Show numeric value label */
   showValue?: boolean;
@@ -17,13 +17,14 @@ export interface SliderProps {
   style?: BevyStyle;
   trackStyle?: BevyStyle;
   fillStyle?: BevyStyle;
+  thumbStyle?: BevyStyle;
 }
 
 /**
- * Horizontal slider built from Node/Button primitives.
+ * Horizontal slider mapped to Bevy's headless `ui_widgets::Slider`.
  *
- * Full track drag is not available yet (no pointer-move events). Value is
- * adjusted via step buttons; the track fill reflects the current ratio.
+ * Host owns drag / keyboard interaction; React supplies track/fill/thumb look.
+ * Thumb `left` is positioned by the host from `SliderValue`.
  */
 export function Slider({
   value,
@@ -36,17 +37,19 @@ export function Slider({
   style,
   trackStyle,
   fillStyle,
+  thumbStyle,
 }: SliderProps): ReactNode {
   const clamped = Math.min(max, Math.max(min, value));
   const range = max - min;
   const ratio = range <= 0 ? 0 : (clamped - min) / range;
   const fillPercent = `${Math.round(ratio * 100)}%`;
 
-  const rowStyle: BevyStyle = {
+  const rootStyle: BevyStyle = {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     minHeight: 28,
+    width: "100%",
     ...style,
   };
 
@@ -54,55 +57,83 @@ export function Slider({
     flexGrow: 1,
     flexShrink: 1,
     flexBasis: 0,
-    height: 8,
-    backgroundColor: "#2a2a3a",
-    borderRadius: 4,
+    height: 12,
+    justifyContent: "center",
+    position: "relative",
     ...trackStyle,
   };
 
+  const rail: BevyStyle = {
+    height: 8,
+    width: "100%",
+    backgroundColor: "#2a2a3a",
+    borderRadius: 4,
+  };
+
   const fill: BevyStyle = {
+    position: "absolute",
+    left: 0,
+    top: 2,
     width: fillPercent,
-    height: "100%",
+    height: 8,
     backgroundColor: "#5a5aff",
     borderRadius: 4,
+    pointerEvents: "none",
     ...fillStyle,
   };
 
-  const stepButtonStyle: BevyStyle = {
-    width: 28,
-    height: 28,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#3a3a4a",
-    borderWidth: 1,
-    borderColor: "#5a5a6a",
+  // Travel track is inset by thumb width so host % positioning stays in sync.
+  const travel: BevyStyle = {
+    position: "absolute",
+    left: 0,
+    right: 16,
+    top: 0,
+    bottom: 0,
   };
 
-  const adjust = (delta: number) => {
-    if (disabled) return;
-    const next = Math.min(max, Math.max(min, clamped + delta));
-    if (next !== clamped) {
-      onChange(next);
-    }
+  const thumb: BevyStyle = {
+    position: "absolute",
+    width: 16,
+    height: 16,
+    top: -2,
+    backgroundColor: "#8a8aff",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#c0c0ff",
+    ...thumbStyle,
   };
 
   return (
-    <Node style={rowStyle}>
-      <Button style={stepButtonStyle} onClick={() => adjust(-step)}>
-        <Text style={{ fontSize: 14, color: "#ffffff" }}>-</Text>
-      </Button>
-      {/* Track — visual only until pointer-drag is wired */}
+    <bevy-slider
+      value={clamped}
+      min={min}
+      max={max}
+      step={step}
+      disabled={disabled}
+      style={rootStyle}
+      onChange={(event) => {
+        if (disabled) return;
+        const next =
+          event && typeof event === "object" && "value" in event
+            ? Number((event as { value: number }).value)
+            : Number(event);
+        if (!Number.isNaN(next) && next !== clamped) {
+          onChange(next);
+        }
+      }}
+    >
       <Node style={track}>
+        <Node style={rail} />
         <Node style={fill} />
+        <Node style={travel}>
+          <bevy-slider-thumb style={thumb} />
+        </Node>
       </Node>
-      <Button style={stepButtonStyle} onClick={() => adjust(step)}>
-        <Text style={{ fontSize: 14, color: "#ffffff" }}>+</Text>
-      </Button>
       {showValue ? (
         <Text style={{ fontSize: 14, color: "#cccccc", minWidth: 36 }}>
           {String(Math.round(clamped))}
         </Text>
       ) : null}
-    </Node>
+    </bevy-slider>
   );
 }

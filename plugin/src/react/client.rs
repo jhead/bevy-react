@@ -30,6 +30,8 @@ pub enum ReactClientProto {
     CreateText { root_id: String, node_id: u64, content: String },
     /// Append a child to a parent node
     AppendChild { root_id: String, parent_id: u64, child_id: u64 },
+    /// Insert a child before another child in a parent node
+    InsertBefore { root_id: String, parent_id: u64, child_id: u64, before_id: u64 },
     /// Remove a child from a parent node
     RemoveChild { root_id: String, parent_id: u64, child_id: u64 },
     /// Update node properties
@@ -122,6 +124,24 @@ impl ReactClient {
                 child_id,
             })
             .expect("Failed to send AppendChild");
+    }
+
+    /// Insert a child before another child
+    pub fn insert_before(&self, root_id: String, parent_id: u64, child_id: u64, before_id: u64) {
+        log::debug!(
+            "ReactClient::insert_before parent={} child={} before={}",
+            parent_id,
+            child_id,
+            before_id
+        );
+        self.tx
+            .send(ReactClientProto::InsertBefore {
+                root_id,
+                parent_id,
+                child_id,
+                before_id,
+            })
+            .expect("Failed to send InsertBefore");
     }
 
     /// Remove a child from a parent

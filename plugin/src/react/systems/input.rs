@@ -8,6 +8,10 @@ use bevy::prelude::*;
 use crate::js_bevy::JsClientResource;
 use crate::react::systems::{Focusable, FocusedNode, ReactNode, ReactScriptSource};
 
+/// Component tracking the previous interaction state for hover detection
+#[derive(Component, Default)]
+pub struct PreviousInteraction(pub Interaction);
+
 /// Handle UI interactions and dispatch events to JS
 pub fn handle_input_interactions(
     query: Query<(&Interaction, &ReactNode, Entity, Option<&Focusable>), Changed<Interaction>>,
@@ -167,6 +171,76 @@ pub fn handle_keyboard_input(
             node_id = focused_node_id,
             key = key_escaped
         ));
+    }
+}
+
+/// Handle hover enter/leave events by tracking interaction state changes
+pub fn handle_hover_events(
+    mut query: Query<(&Interaction, &ReactNode, Entity, Option<&mut PreviousInteraction>)>,
+    js_client: Option<Res<JsClientResource>>,
+    parents: Query<&ChildOf>,
+    scripts: Query<&ReactScriptSource>,
+    mut commands: Commands,
+) {
+    let Some(js_client) = js_client else {
+        return;
+    };
+
+    for (interaction, react_node, entity, prev) in &mut query {
+        let prev_interaction = prev
+            .as_ref()
+            .map(|p| p.0)
+            .unwrap_or(Interaction::None);
+
+        // Skip if no change
+        if *interaction == prev_interaction {
+            continue;
+        }
+
+        let Some(module_name) = find_module_name(entity, &parents, &scripts) else {
+            continue;
+        };
+
+        let node_id = react_node.node_id;
+
+        // Detect hover transitions
+        let was_hovered = matches!(prev_interaction, Interaction::Hovered | Interaction::Pressed);
+        let is_hovered = matches!(*interaction, Interaction::Hovered | Interaction::Pressed);
+
+        if !was_hovered && is_hovered {
+            js_client.execute(format!(
+                r#"
+                (async () => {{
+                    try {{
+                        const mod = await import('{module_name}');
+                        mod.default.dispatchEvent({node_id}, 'mouseenter');
+                    }} catch (err) {{
+                        console.error("Failed to dispatch mouseenter event:", err);
+                    }}
+                }})()
+                "#,
+            ));
+        } else if was_hovered && !is_hovered {
+            js_client.execute(format!(
+                r#"
+                (async () => {{
+                    try {{
+                        const mod = await import('{module_name}');
+                        mod.default.dispatchEvent({node_id}, 'mouseleave');
+                    }} catch (err) {{
+                        console.error("Failed to dispatch mouseleave event:", err);
+                    }}
+                }})()
+                "#,
+            ));
+        }
+
+        // Update stored state
+        if let Some(mut prev) = prev {
+            prev.0 = *interaction;
+        } else {
+            commands.entity(entity).insert(PreviousInteraction(*interaction));
+        }
     }
 }
 

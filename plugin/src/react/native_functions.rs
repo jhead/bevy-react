@@ -77,6 +77,21 @@ fn register_react_functions(context: &mut Context, react_client: ReactClient) {
         )
         .expect("Failed to register __react_append_child");
 
+    // __react_insert_before(parent_id: number, child_id: number, before_id: number) -> void
+    context
+        .register_global_callable(
+            JsString::from("__react_insert_before"),
+            3,
+            NativeFunction::from_copy_closure_with_captures(
+                move |_this: &JsValue,
+                      args: &[JsValue],
+                      client: &ReactClient,
+                      ctx: &mut Context| { insert_before_fn(args, client, ctx) },
+                react_client.clone(),
+            ),
+        )
+        .expect("Failed to register __react_insert_before");
+
     // __react_remove_child(parent_id: number, child_id: number) -> void
     context
         .register_global_callable(
@@ -222,6 +237,40 @@ fn append_child_fn(
         .unwrap_or(0);
 
     client.append_child(root_id, parent_id, child_id);
+    Ok(JsValue::undefined())
+}
+
+/// __react_insert_before(parent_id, child_id, before_id)
+fn insert_before_fn(
+    args: &[JsValue],
+    client: &ReactClient,
+    _ctx: &mut Context,
+) -> JsResult<JsValue> {
+    let root_id = args
+        .first()
+        .and_then(|v| v.as_string())
+        .map(|s| s.to_std_string_escaped())
+        .unwrap_or_else(|| "root".to_string());
+
+    let parent_id = args
+        .get(1)
+        .and_then(|v| v.as_number())
+        .map(|n| n as u64)
+        .unwrap_or(0);
+
+    let child_id = args
+        .get(2)
+        .and_then(|v| v.as_number())
+        .map(|n| n as u64)
+        .unwrap_or(0);
+
+    let before_id = args
+        .get(3)
+        .and_then(|v| v.as_number())
+        .map(|n| n as u64)
+        .unwrap_or(0);
+
+    client.insert_before(root_id, parent_id, child_id, before_id);
     Ok(JsValue::undefined())
 }
 

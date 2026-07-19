@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::ui::Display;
 
 use crate::react::client::ReactClientProto;
 use crate::react::style::{json_to_style, parse_color, parse_props, parse_val};
@@ -130,6 +131,28 @@ pub fn process_react_messages(
                 handle_update_text(&mut commands, context.as_mut(), node_id, &content);
             }
 
+            ReactClientProto::InsertBefore {
+                root_id,
+                parent_id,
+                child_id,
+                before_id,
+            } => {
+                let Some(root) = root_map.roots.get(&root_id) else {
+                    continue;
+                };
+                let Ok((_, mut context)) = contexts.get_mut(*root) else {
+                    continue;
+                };
+
+                handle_insert_before(
+                    &mut commands,
+                    context.as_mut(),
+                    parent_id,
+                    child_id,
+                    before_id,
+                );
+            }
+
             ReactClientProto::DestroyNode { root_id, node_id } => {
                 let Some(root) = root_map.roots.get(&root_id) else {
                     continue;
@@ -185,7 +208,7 @@ fn handle_create_node(
             // Image node
             let mut cmd = commands.spawn((style, ReactNode { node_id }));
 
-            if let Some(ref image_path) = props.image {
+            if let Some(image_path) = props.src.as_deref().or(props.image.as_deref()) {
                 let image_handle: Handle<Image> = asset_server.load(image_path);
                 cmd.insert(ImageNode::new(image_handle));
             }
@@ -240,8 +263,7 @@ fn handle_create_node(
     // Apply interaction component if needed
     entity_commands.insert(Interaction::default());
 
-    // Apply colors (common for non-text nodes)
-    // TODO: why is this here?
+    // Apply visual components (common for non-text nodes)
     if node_type != "bevy-text" {
         if let Some(ref style_props) = props.style {
             if let Some(ref bg) = style_props.background_color {
@@ -254,6 +276,22 @@ fn handle_create_node(
                     entity_commands.insert(BorderColor::all(color));
                 }
             }
+            if let Some(ref br) = style_props.border_radius {
+                let val = parse_val(&br.0);
+                entity_commands.insert(BorderRadius::all(val));
+            }
+            if let Some(ref d) = style_props.display {
+                if d.to_lowercase() == "none" {
+                    entity_commands.insert(Visibility::Hidden);
+                }
+            }
+        }
+    }
+
+    // Apply ZIndex if specified
+    if let Some(ref style_props) = props.style {
+        if let Some(z) = style_props.z_index {
+            entity_commands.insert(ZIndex(z));
         }
     }
 
@@ -372,10 +410,27 @@ fn handle_update_node(
                 commands.entity(entity).insert(BorderColor::all(color));
             }
         }
+        if let Some(ref br) = style_props.border_radius {
+            let val = parse_val(&br.0);
+            commands.entity(entity).insert(BorderRadius::all(val));
+        }
+        if let Some(z) = style_props.z_index {
+            commands.entity(entity).insert(ZIndex(z));
+        }
+        // Update visibility based on display
+        match style_props.display.as_deref() {
+            Some(d) if d.eq_ignore_ascii_case("none") => {
+                commands.entity(entity).insert(Visibility::Hidden);
+            }
+            Some(_) => {
+                commands.entity(entity).insert(Visibility::Inherited);
+            }
+            None => {}
+        }
     }
 
     // Update image if provided
-    if let Some(ref image_path) = props.image {
+    if let Some(image_path) = props.src.as_deref().or(props.image.as_deref()) {
         let image_handle: Handle<Image> = asset_server.load(image_path);
         commands.entity(entity).insert(ImageNode::new(image_handle));
     }
@@ -417,7 +472,64 @@ fn handle_destroy_node(commands: &mut Commands, context: &mut ReactContext, node
     }
 }
 
+/// Insert a child before another child in a parent
+fn handle_insert_before(
+    commands: &mut Commands,
+    context: &ReactContext,
+    parent_id: u64,
+    child_id: u64,
+    before_id: u64,
+) {
+    let parent_entity = if parent_id == 0 {
+        context.root
+    } else {
+        context.nodes.get(&parent_id).copied()
+    };
+
+    let child_entity = context.nodes.get(&child_id).copied();
+    let before_entity = context.nodes.get(&before_id).copied();
+
+    match (parent_entity, child_entity, before_entity) {
+        (Some(parent), Some(child), Some(before)) => {
+            // First remove child from current parent if it has one
+            commands.entity(child).remove_parent_in_place();
+            // Find the index of before_entity among parent's children and insert there
+            commands.queue(move |world: &mut World| {
+                let children: Vec<Entity> = world
+                    .entity(parent)
+                    .get::<Children>()
+                    .map(|c| c.into_iter().collect())
+                    .unwrap_or_default();
+
+                let index = children
+                    .iter()
+                    .position(|&e| e == before)
+                    .unwrap_or(children.len());
+
+                world.entity_mut(parent).insert_children(index, &[child]);
+            });
+            log::info!(
+                "Inserted child {} before {} in parent {}",
+                child_id,
+                before_id,
+                parent_id
+            );
+        }
+        _ => {
+            log::warn!(
+                "Failed to insert before: parent_id={} child_id={} before_id={} (entities not found)",
+                parent_id,
+                child_id,
+                before_id
+            );
+        }
+    }
+}
+
 /// Clear all children from the root container
-fn handle_clear_container(_commands: &mut Commands, _context: &mut ReactContext) {
-    log::info!("React clear_container called (no-op for now)");
+fn handle_clear_container(commands: &mut Commands, context: &mut ReactContext) {
+    for (_node_id, entity) in context.nodes.drain() {
+        commands.entity(entity).despawn();
+    }
+    log::info!("Cleared container: despawned all nodes");
 }

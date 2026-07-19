@@ -104,6 +104,24 @@ export function dispatchEvent(nodeId: number, event: string, data?: KeyboardEven
       }
       break;
     }
+    case "mouseenter": {
+      const onHover = props.onHover;
+      if (typeof onHover === "function") {
+        onHover();
+      }
+      const onMouseEnter = props.onMouseEnter;
+      if (typeof onMouseEnter === "function") {
+        onMouseEnter();
+      }
+      break;
+    }
+    case "mouseleave": {
+      const onMouseLeave = props.onMouseLeave;
+      if (typeof onMouseLeave === "function") {
+        onMouseLeave();
+      }
+      break;
+    }
   }
 }
 
@@ -286,18 +304,32 @@ class BevyHostConfig {
   insertBefore = (
     parent: Instance,
     child: Instance | TextInstance,
-    _beforeChild: Instance | TextInstance
+    beforeChild: Instance | TextInstance
   ): void => {
-    // For now, we just append - proper ordering requires more RPC support
-    __react_append_child(this.props.rootId, parent.nodeId, child.nodeId);
+    __react_insert_before(this.props.rootId, parent.nodeId, child.nodeId, beforeChild.nodeId);
+
+    if ("children" in parent && "type" in child) {
+      // Remove if already present
+      const existingIdx = parent.children.findIndex((c) => c.nodeId === child.nodeId);
+      if (existingIdx !== -1) {
+        parent.children.splice(existingIdx, 1);
+      }
+      // Insert before the target
+      const beforeIdx = parent.children.findIndex((c) => c.nodeId === beforeChild.nodeId);
+      if (beforeIdx !== -1) {
+        parent.children.splice(beforeIdx, 0, child as Instance);
+      } else {
+        parent.children.push(child as Instance);
+      }
+    }
   }
 
   insertInContainerBefore = (
     container: Container,
     child: Instance | TextInstance,
-    _beforeChild: Instance | TextInstance
+    beforeChild: Instance | TextInstance
   ): void => {
-    __react_append_child(this.props.rootId, container.rootId, child.nodeId);
+    __react_insert_before(this.props.rootId, container.rootId, child.nodeId, beforeChild.nodeId);
   }
 
   clearContainer = (container: Container): void => {

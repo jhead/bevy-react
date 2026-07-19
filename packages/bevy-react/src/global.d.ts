@@ -35,6 +35,14 @@ declare global {
   function __react_append_child(rootId: string, parentId: number, childId: number): void;
 
   /**
+   * Inserts a child node before another child in a parent node
+   * @param parentId - The parent node ID (0 for root container)
+   * @param childId - The child node ID to insert
+   * @param beforeId - The node ID to insert before
+   */
+  function __react_insert_before(rootId: string, parentId: number, childId: number, beforeId: number): void;
+
+  /**
    * Removes a child node from a parent node
    * @param parentId - The parent node ID
    * @param childId - The child node ID to remove

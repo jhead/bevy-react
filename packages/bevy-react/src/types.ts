@@ -49,6 +49,9 @@ export interface BevyStyle {
   justifySelf?: "auto" | "start" | "end" | "center" | "baseline" | "stretch";
 
   // Spacing
+  gap?: string | number;
+  rowGap?: string | number;
+  columnGap?: string | number;
   margin?: string | number;
   marginLeft?: string | number;
   marginRight?: string | number;
@@ -67,6 +70,7 @@ export interface BevyStyle {
 
   // Visual
   backgroundColor?: string;
+  zIndex?: number;
 
   // Display
   display?: "flex" | "none";
@@ -89,6 +93,8 @@ export interface ButtonProps extends NodeProps {
   onPress?: () => void;
   onRelease?: () => void;
   onHover?: () => void;
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }
 
 /**
@@ -115,6 +121,7 @@ export interface TextProps {
   style?: BevyStyle & {
     fontSize?: number;
     color?: string;
+    /** Not yet supported by bevy-react */
     fontFamily?: string;
   };
 }

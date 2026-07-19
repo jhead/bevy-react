@@ -24,6 +24,7 @@ impl Plugin for ReactPlugin {
                 (
                     process_react_messages,
                     handle_input_interactions,
+                    handle_hover_events,
                     handle_keyboard_input,
                     inspect,
                 ),

@@ -1,5 +1,8 @@
 use bevy::prelude::*;
-use bevy::ui::{AlignItems, FlexDirection, JustifyContent, PositionType, Val};
+use bevy::ui::{
+    AlignContent, AlignItems, AlignSelf, Display, FlexDirection, FlexWrap, JustifyContent,
+    JustifyItems, JustifySelf, Overflow, OverflowAxis, PositionType, Val,
+};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
@@ -43,6 +46,8 @@ pub struct NodeProps {
     pub style: Option<StyleProps>,
     #[serde(default)]
     pub image: Option<String>,
+    #[serde(default)]
+    pub src: Option<String>,
     /// Text content for <text> elements
     #[serde(default)]
     pub content: Option<String>,
@@ -62,16 +67,16 @@ pub struct StyleProps {
 
     // Flexbox
     pub flex_direction: Option<String>,
-    pub _flex_wrap: Option<String>,
+    pub flex_wrap: Option<String>,
     pub flex_grow: Option<f32>,
     pub flex_shrink: Option<f32>,
     pub flex_basis: Option<CssValue>,
     pub align_items: Option<String>,
-    pub _align_self: Option<String>,
-    pub _align_content: Option<String>,
+    pub align_self: Option<String>,
+    pub align_content: Option<String>,
     pub justify_content: Option<String>,
-    pub _justify_items: Option<String>,
-    pub _justify_self: Option<String>,
+    pub justify_items: Option<String>,
+    pub justify_self: Option<String>,
 
     // Spacing
     pub margin: Option<CssValue>,
@@ -98,16 +103,19 @@ pub struct StyleProps {
     pub border_right: Option<CssValue>,
     pub border_bottom: Option<CssValue>,
     pub border_left: Option<CssValue>,
-    pub _border_radius: Option<CssValue>,
+    pub border_radius: Option<CssValue>,
 
     // Gap
-    pub _gap: Option<CssValue>,
+    pub gap: Option<CssValue>,
     pub row_gap: Option<CssValue>,
     pub column_gap: Option<CssValue>,
 
     // Display
-    pub _display: Option<String>,
-    pub _overflow: Option<String>,
+    pub display: Option<String>,
+    pub overflow: Option<String>,
+
+    // Z-Index
+    pub z_index: Option<i32>,
 
     // Colors (for BackgroundColor, BorderColor)
     pub background_color: Option<String>,
@@ -210,6 +218,93 @@ fn parse_position_type(value: &str) -> PositionType {
         "relative" => PositionType::Relative,
         "absolute" => PositionType::Absolute,
         _ => PositionType::default(),
+    }
+}
+
+/// Parse flex wrap
+fn parse_flex_wrap(value: &str) -> FlexWrap {
+    match value.to_lowercase().as_str() {
+        "nowrap" | "no-wrap" => FlexWrap::NoWrap,
+        "wrap" => FlexWrap::Wrap,
+        "wrap-reverse" | "wrapreverse" => FlexWrap::WrapReverse,
+        _ => FlexWrap::default(),
+    }
+}
+
+/// Parse align self
+fn parse_align_self(value: &str) -> AlignSelf {
+    match value.to_lowercase().as_str() {
+        "auto" => AlignSelf::Auto,
+        "start" | "flex-start" | "flexstart" => AlignSelf::FlexStart,
+        "end" | "flex-end" | "flexend" => AlignSelf::FlexEnd,
+        "center" => AlignSelf::Center,
+        "baseline" => AlignSelf::Baseline,
+        "stretch" => AlignSelf::Stretch,
+        _ => AlignSelf::default(),
+    }
+}
+
+/// Parse align content
+fn parse_align_content(value: &str) -> AlignContent {
+    match value.to_lowercase().as_str() {
+        "start" | "flex-start" | "flexstart" => AlignContent::FlexStart,
+        "end" | "flex-end" | "flexend" => AlignContent::FlexEnd,
+        "center" => AlignContent::Center,
+        "stretch" => AlignContent::Stretch,
+        "space-between" | "spacebetween" => AlignContent::SpaceBetween,
+        "space-around" | "spacearound" => AlignContent::SpaceAround,
+        "space-evenly" | "spaceevenly" => AlignContent::SpaceEvenly,
+        _ => AlignContent::default(),
+    }
+}
+
+/// Parse justify items
+fn parse_justify_items(value: &str) -> JustifyItems {
+    match value.to_lowercase().as_str() {
+        "start" | "flex-start" | "flexstart" => JustifyItems::Start,
+        "end" | "flex-end" | "flexend" => JustifyItems::End,
+        "center" => JustifyItems::Center,
+        "baseline" => JustifyItems::Baseline,
+        "stretch" => JustifyItems::Stretch,
+        _ => JustifyItems::default(),
+    }
+}
+
+/// Parse justify self
+fn parse_justify_self(value: &str) -> JustifySelf {
+    match value.to_lowercase().as_str() {
+        "auto" => JustifySelf::Auto,
+        "start" | "flex-start" | "flexstart" => JustifySelf::Start,
+        "end" | "flex-end" | "flexend" => JustifySelf::End,
+        "center" => JustifySelf::Center,
+        "baseline" => JustifySelf::Baseline,
+        "stretch" => JustifySelf::Stretch,
+        _ => JustifySelf::default(),
+    }
+}
+
+/// Parse display
+fn parse_display(value: &str) -> Display {
+    match value.to_lowercase().as_str() {
+        "flex" => Display::Flex,
+        "none" => Display::None,
+        "grid" => Display::Grid,
+        "block" => Display::Block,
+        _ => Display::default(),
+    }
+}
+
+/// Parse overflow
+fn parse_overflow(value: &str) -> Overflow {
+    let axis = match value.to_lowercase().as_str() {
+        "visible" => OverflowAxis::Visible,
+        "clip" | "hidden" => OverflowAxis::Clip,
+        "scroll" => OverflowAxis::Scroll,
+        _ => OverflowAxis::Visible,
+    };
+    Overflow {
+        x: axis,
+        y: axis,
     }
 }
 
@@ -359,11 +454,26 @@ pub fn json_to_style(props: &StyleProps) -> Node {
     if let Some(ref fb) = props.flex_basis {
         style.flex_basis = parse_val(&fb.0);
     }
+    if let Some(ref fw) = props.flex_wrap {
+        style.flex_wrap = parse_flex_wrap(fw);
+    }
     if let Some(ref ai) = props.align_items {
         style.align_items = parse_align_items(ai);
     }
+    if let Some(ref a_self) = props.align_self {
+        style.align_self = parse_align_self(a_self);
+    }
+    if let Some(ref ac) = props.align_content {
+        style.align_content = parse_align_content(ac);
+    }
     if let Some(ref jc) = props.justify_content {
         style.justify_content = parse_justify_content(jc);
+    }
+    if let Some(ref ji) = props.justify_items {
+        style.justify_items = parse_justify_items(ji);
+    }
+    if let Some(ref js) = props.justify_self {
+        style.justify_self = parse_justify_self(js);
     }
 
     // Margins - handle shorthand first
@@ -437,12 +547,27 @@ pub fn json_to_style(props: &StyleProps) -> Node {
         style.border.left = parse_val(&b.0);
     }
 
-    // Gap
+    // Gap - shorthand first, then specific overrides
+    if let Some(ref g) = props.gap {
+        let val = parse_val(&g.0);
+        style.row_gap = val;
+        style.column_gap = val;
+    }
     if let Some(ref g) = props.row_gap {
         style.row_gap = parse_val(&g.0);
     }
     if let Some(ref g) = props.column_gap {
         style.column_gap = parse_val(&g.0);
+    }
+
+    // Display
+    if let Some(ref d) = props.display {
+        style.display = parse_display(d);
+    }
+
+    // Overflow
+    if let Some(ref o) = props.overflow {
+        style.overflow = parse_overflow(o);
     }
 
     style

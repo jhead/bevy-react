@@ -19,10 +19,14 @@ log = "0.4.28"
 once_cell = "1.21.3"
 serde = "1.0.228"
 serde_json = "1.0.145"
+sourcemap = "9.3.2"
 url = "2.5.7"
 
 # Used by the app-level `fetch` Fetcher (JsResponse builder).
 http = { version = "1", optional = true }
+
+# Optional entity-mapping inspector (`egui` feature).
+bevy_egui = { version = "0.38", optional = true }
 
 # Native-only dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -42,3 +46,9 @@ js-sys = "0.3"
 default = ["websocket", "fetch"]
 websocket = ["tokio-tungstenite"]
 fetch = ["reqwest", "http"]
+# JSON WebSocket bridge on :8098 (component tree + node_id↔Entity map).
+devtools = ["websocket"]
+# egui panel listing ReactContext.nodes (does not force egui on default users).
+egui = ["dep:bevy_egui"]
+# Convenience: debug bridge + inspector together.
+devtools-full = ["devtools", "egui"]

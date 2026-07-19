@@ -79,6 +79,29 @@ Parsers and builders live in `style.rs`. Layout-independent props are applied by
 | `objectFit` | `NodeImageMode` via `parse_object_fit` (`fill`/`stretch` → Stretch; others → Auto) |
 | `tint` / `tintColor` | Image tint via `style_tint` |
 
+## Interaction styles (host-side)
+
+Hover / pressed / focused visuals are applied entirely in Rust from Bevy `Interaction` and focus state — no React re-render required. JS still owns `onClick` and other event handlers.
+
+```tsx
+style={{
+  backgroundColor: '#333',
+  hover: { backgroundColor: '#555' },
+  pressed: { backgroundColor: '#222' },
+  focused: { borderColor: '#4af' },
+  transition: 'backgroundColor 100ms', // or { backgroundColor: 100 }
+}}
+```
+
+| Prop | Effect |
+|---|---|
+| `hover` | Nested `BevyStyle` when `Interaction::Hovered` (and under pressed before `pressed` wins) |
+| `pressed` | Nested overrides when `Interaction::Pressed` |
+| `focused` | Nested overrides when the node has keyboard/input focus |
+| `transition` | Host-side lerp for `backgroundColor`, `borderColor`, `color`, `opacity` (string or `{ prop: ms }`) |
+
+Unknown style keys are logged with `log::warn` at parse time (`Unsupported style prop '…'`) instead of being silently dropped.
+
 ## Render wiring
 
 These are **parsed and typed** in `style.rs` / `BevyStyle`, and layout props already flow through `json_to_style`. Visual helpers still need `render.rs` to call them for full end-to-end effect:

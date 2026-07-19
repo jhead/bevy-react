@@ -10,6 +10,7 @@ use bevy::ui::{
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// A value that can be either a string or a number (for CSS-like length properties).
 /// Numbers are treated as pixel values (`"Npx"`).
@@ -72,8 +73,102 @@ pub struct NodeProps {
     pub content: Option<String>,
 }
 
+/// Per-property transition durations (seconds), keyed by camelCase prop name.
+///
+/// Accepts CSS-like strings (`"backgroundColor 100ms"`) or objects
+/// (`{ backgroundColor: 100 }` with values in milliseconds).
+#[derive(Debug, Clone, Default)]
+pub struct StyleTransitions {
+    pub durations: HashMap<String, f32>,
+}
+
+impl StyleTransitions {
+    pub fn is_empty(&self) -> bool {
+        self.durations.is_empty()
+    }
+
+    /// Duration in seconds for a camelCase prop, or `None` if unset.
+    pub fn duration_secs(&self, prop: &str) -> Option<f32> {
+        self.durations.get(prop).copied()
+    }
+}
+
+impl<'de> Deserialize<'de> for StyleTransitions {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        Ok(parse_transition_value(&value))
+    }
+}
+
+/// Parse a transition value (string or object) into durations in seconds.
+pub fn parse_transition_value(value: &Value) -> StyleTransitions {
+    match value {
+        Value::String(s) => parse_transition_string(s),
+        Value::Object(map) => {
+            let mut durations = HashMap::new();
+            for (key, v) in map {
+                if let Some(secs) = transition_entry_to_secs(v) {
+                    durations.insert(key.clone(), secs);
+                }
+            }
+            StyleTransitions { durations }
+        }
+        Value::Null => StyleTransitions::default(),
+        other => {
+            log::warn!("Invalid transition value: {:?}, ignoring", other);
+            StyleTransitions::default()
+        }
+    }
+}
+
+fn transition_entry_to_secs(value: &Value) -> Option<f32> {
+    match value {
+        Value::Number(n) => n.as_f64().map(|ms| (ms as f32) / 1000.0),
+        Value::String(s) => Some(parse_duration_to_secs(s)),
+        _ => None,
+    }
+}
+
+/// Parse `"backgroundColor 100ms, opacity 200ms"` or `"all 100ms"`.
+pub fn parse_transition_string(value: &str) -> StyleTransitions {
+    let mut durations = HashMap::new();
+    for part in value.split(',') {
+        let tokens: Vec<&str> = part.split_whitespace().collect();
+        match tokens.as_slice() {
+            [prop, dur] => {
+                durations.insert((*prop).to_string(), parse_duration_to_secs(dur));
+            }
+            [prop] => {
+                // Bare prop name with no duration — treat as instant
+                durations.insert((*prop).to_string(), 0.0);
+            }
+            _ => {
+                if !part.trim().is_empty() {
+                    log::warn!("Invalid transition segment '{}'", part.trim());
+                }
+            }
+        }
+    }
+    StyleTransitions { durations }
+}
+
+fn parse_duration_to_secs(value: &str) -> f32 {
+    let value = value.trim().to_lowercase();
+    if let Some(ms) = value.strip_suffix("ms") {
+        return ms.trim().parse::<f32>().unwrap_or(0.0) / 1000.0;
+    }
+    if let Some(s) = value.strip_suffix('s') {
+        return s.trim().parse::<f32>().unwrap_or(0.0);
+    }
+    // Bare number → milliseconds (matches object form)
+    value.parse::<f32>().unwrap_or(0.0) / 1000.0
+}
+
 /// Style properties from React (CSS-like)
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StyleProps {
     // Sizing
@@ -195,14 +290,208 @@ pub struct StyleProps {
     /// Maps to Bevy [`FocusPolicy`] + [`Pickable`] so transparent HUD roots can
     /// pass clicks through to the world / map underneath.
     pub pointer_events: Option<String>,
+
+    /// Host-side hover overrides (applied from Bevy [`Interaction`], no React round-trip).
+    pub hover: Option<Box<StyleProps>>,
+    /// Host-side pressed / active overrides.
+    pub pressed: Option<Box<StyleProps>>,
+    /// Host-side focused overrides (from [`crate::react::systems::FocusedNode`]).
+    pub focused: Option<Box<StyleProps>>,
+    /// Host-side color/numeric transitions between interaction states.
+    #[serde(default)]
+    pub transition: StyleTransitions,
+
+    /// Unknown keys captured for warning (cleared after [`StyleProps::finalize_parse`]).
+    #[serde(flatten)]
+    #[serde(default)]
+    pub(crate) unknown: HashMap<String, Value>,
+}
+
+impl StyleProps {
+    /// Warn about unsupported style keys and clear the flatten bag (including nested overrides).
+    pub fn finalize_parse(&mut self) {
+        for key in self.unknown.keys() {
+            log::warn!("Unsupported style prop '{}'", key);
+        }
+        self.unknown.clear();
+        if let Some(ref mut hover) = self.hover {
+            hover.finalize_parse();
+        }
+        if let Some(ref mut pressed) = self.pressed {
+            pressed.finalize_parse();
+        }
+        if let Some(ref mut focused) = self.focused {
+            focused.finalize_parse();
+        }
+    }
+
+    /// True when host-side interaction styling or transitions are present.
+    pub fn has_interaction_styles(&self) -> bool {
+        self.hover.is_some()
+            || self.pressed.is_some()
+            || self.focused.is_some()
+            || !self.transition.is_empty()
+    }
+
+    /// Clone without hover/pressed/focused/transition/unknown (pure visual+layout props).
+    pub fn without_interaction_meta(&self) -> StyleProps {
+        let mut out = self.clone();
+        out.hover = None;
+        out.pressed = None;
+        out.focused = None;
+        out.transition = StyleTransitions::default();
+        out.unknown.clear();
+        out
+    }
+}
+
+/// Overlay non-`None` fields from `overlay` onto `base` (interaction meta stripped).
+pub fn merge_style_props(base: &StyleProps, overlay: &StyleProps) -> StyleProps {
+    let base = base.without_interaction_meta();
+    let overlay = overlay.without_interaction_meta();
+    StyleProps {
+        width: overlay.width.or(base.width),
+        height: overlay.height.or(base.height),
+        min_width: overlay.min_width.or(base.min_width),
+        min_height: overlay.min_height.or(base.min_height),
+        max_width: overlay.max_width.or(base.max_width),
+        max_height: overlay.max_height.or(base.max_height),
+        aspect_ratio: overlay.aspect_ratio.or(base.aspect_ratio),
+        flex_direction: overlay.flex_direction.or(base.flex_direction),
+        flex_wrap: overlay.flex_wrap.or(base.flex_wrap),
+        flex_grow: overlay.flex_grow.or(base.flex_grow),
+        flex_shrink: overlay.flex_shrink.or(base.flex_shrink),
+        flex_basis: overlay.flex_basis.or(base.flex_basis),
+        align_items: overlay.align_items.or(base.align_items),
+        align_self: overlay.align_self.or(base.align_self),
+        align_content: overlay.align_content.or(base.align_content),
+        justify_content: overlay.justify_content.or(base.justify_content),
+        justify_items: overlay.justify_items.or(base.justify_items),
+        justify_self: overlay.justify_self.or(base.justify_self),
+        grid_template_columns: overlay.grid_template_columns.or(base.grid_template_columns),
+        grid_template_rows: overlay.grid_template_rows.or(base.grid_template_rows),
+        grid_auto_columns: overlay.grid_auto_columns.or(base.grid_auto_columns),
+        grid_auto_rows: overlay.grid_auto_rows.or(base.grid_auto_rows),
+        grid_auto_flow: overlay.grid_auto_flow.or(base.grid_auto_flow),
+        grid_column: overlay.grid_column.or(base.grid_column),
+        grid_row: overlay.grid_row.or(base.grid_row),
+        grid_column_start: overlay.grid_column_start.or(base.grid_column_start),
+        grid_column_end: overlay.grid_column_end.or(base.grid_column_end),
+        grid_row_start: overlay.grid_row_start.or(base.grid_row_start),
+        grid_row_end: overlay.grid_row_end.or(base.grid_row_end),
+        margin: overlay.margin.or(base.margin),
+        margin_top: overlay.margin_top.or(base.margin_top),
+        margin_right: overlay.margin_right.or(base.margin_right),
+        margin_bottom: overlay.margin_bottom.or(base.margin_bottom),
+        margin_left: overlay.margin_left.or(base.margin_left),
+        padding: overlay.padding.or(base.padding),
+        padding_top: overlay.padding_top.or(base.padding_top),
+        padding_right: overlay.padding_right.or(base.padding_right),
+        padding_bottom: overlay.padding_bottom.or(base.padding_bottom),
+        padding_left: overlay.padding_left.or(base.padding_left),
+        position: overlay.position.or(base.position),
+        top: overlay.top.or(base.top),
+        right: overlay.right.or(base.right),
+        bottom: overlay.bottom.or(base.bottom),
+        left: overlay.left.or(base.left),
+        border: overlay.border.or(base.border),
+        border_width: overlay.border_width.or(base.border_width),
+        border_top: overlay.border_top.or(base.border_top),
+        border_right: overlay.border_right.or(base.border_right),
+        border_bottom: overlay.border_bottom.or(base.border_bottom),
+        border_left: overlay.border_left.or(base.border_left),
+        border_radius: overlay.border_radius.or(base.border_radius),
+        border_top_left_radius: overlay.border_top_left_radius.or(base.border_top_left_radius),
+        border_top_right_radius: overlay.border_top_right_radius.or(base.border_top_right_radius),
+        border_bottom_right_radius: overlay
+            .border_bottom_right_radius
+            .or(base.border_bottom_right_radius),
+        border_bottom_left_radius: overlay
+            .border_bottom_left_radius
+            .or(base.border_bottom_left_radius),
+        gap: overlay.gap.or(base.gap),
+        row_gap: overlay.row_gap.or(base.row_gap),
+        column_gap: overlay.column_gap.or(base.column_gap),
+        display: overlay.display.or(base.display),
+        overflow: overlay.overflow.or(base.overflow),
+        overflow_x: overlay.overflow_x.or(base.overflow_x),
+        overflow_y: overlay.overflow_y.or(base.overflow_y),
+        overflow_clip_margin: overlay.overflow_clip_margin.or(base.overflow_clip_margin),
+        z_index: overlay.z_index.or(base.z_index),
+        background_color: overlay.background_color.or(base.background_color),
+        border_color: overlay.border_color.or(base.border_color),
+        border_top_color: overlay.border_top_color.or(base.border_top_color),
+        border_right_color: overlay.border_right_color.or(base.border_right_color),
+        border_bottom_color: overlay.border_bottom_color.or(base.border_bottom_color),
+        border_left_color: overlay.border_left_color.or(base.border_left_color),
+        opacity: overlay.opacity.or(base.opacity),
+        box_shadow: overlay.box_shadow.or(base.box_shadow),
+        background_image: overlay.background_image.or(base.background_image),
+        background_gradient: overlay.background_gradient.or(base.background_gradient),
+        color: overlay.color.or(base.color),
+        font_size: overlay.font_size.or(base.font_size),
+        font_family: overlay.font_family.or(base.font_family),
+        text_align: overlay.text_align.or(base.text_align),
+        line_height: overlay.line_height.or(base.line_height),
+        line_break: overlay.line_break.or(base.line_break),
+        text_shadow: overlay.text_shadow.or(base.text_shadow),
+        object_fit: overlay.object_fit.or(base.object_fit),
+        image_slice: overlay.image_slice.or(base.image_slice),
+        tint: overlay.tint.or(base.tint),
+        tint_color: overlay.tint_color.or(base.tint_color),
+        pointer_events: overlay.pointer_events.or(base.pointer_events),
+        hover: None,
+        pressed: None,
+        focused: None,
+        transition: StyleTransitions::default(),
+        unknown: HashMap::new(),
+    }
+}
+
+/// Resolve base + focused + hover + pressed (pressed wins over hover).
+pub fn resolve_interaction_style(
+    base: &StyleProps,
+    hover: Option<&StyleProps>,
+    pressed: Option<&StyleProps>,
+    focused: Option<&StyleProps>,
+    interaction: Interaction,
+    is_focused: bool,
+) -> StyleProps {
+    let mut resolved = base.without_interaction_meta();
+    if is_focused {
+        if let Some(f) = focused {
+            resolved = merge_style_props(&resolved, f);
+        }
+    }
+    match interaction {
+        Interaction::Hovered => {
+            if let Some(h) = hover {
+                resolved = merge_style_props(&resolved, h);
+            }
+        }
+        Interaction::Pressed => {
+            if let Some(h) = hover {
+                resolved = merge_style_props(&resolved, h);
+            }
+            if let Some(p) = pressed {
+                resolved = merge_style_props(&resolved, p);
+            }
+        }
+        Interaction::None => {}
+    }
+    resolved
 }
 
 /// Parse props JSON into NodeProps
 pub fn parse_props(props_json: &str) -> NodeProps {
-    serde_json::from_str(props_json).unwrap_or_else(|e| {
+    let mut node: NodeProps = serde_json::from_str(props_json).unwrap_or_else(|e| {
         log::warn!("Failed to parse props JSON: {} - {}", props_json, e);
         NodeProps::default()
-    })
+    });
+    if let Some(ref mut style) = node.style {
+        style.finalize_parse();
+    }
+    node
 }
 
 /// Convert a CSS-like value string to Bevy's Val
@@ -2259,5 +2548,82 @@ mod tests {
         let props: StyleProps =
             serde_json::from_str(r#"{"pointerEvents": "none"}"#).unwrap();
         assert_eq!(style_pointer_events(&props), Some(PointerEvents::None));
+    }
+
+    #[test]
+    fn test_interaction_style_overrides() {
+        let mut props: StyleProps = serde_json::from_str(
+            r##"{
+                "backgroundColor": "#333",
+                "hover": { "backgroundColor": "#555" },
+                "pressed": { "backgroundColor": "#222" },
+                "focused": { "borderColor": "#4af" },
+                "transition": "backgroundColor 100ms"
+            }"##,
+        )
+        .unwrap();
+        props.finalize_parse();
+
+        assert_eq!(props.background_color.as_deref(), Some("#333"));
+        assert_eq!(
+            props.hover.as_ref().unwrap().background_color.as_deref(),
+            Some("#555")
+        );
+        assert_eq!(
+            props.pressed.as_ref().unwrap().background_color.as_deref(),
+            Some("#222")
+        );
+        assert_eq!(
+            props.focused.as_ref().unwrap().border_color.as_deref(),
+            Some("#4af")
+        );
+        assert!(
+            (props.transition.duration_secs("backgroundColor").unwrap() - 0.1).abs() < 0.001
+        );
+        assert!(props.has_interaction_styles());
+
+        let resolved = resolve_interaction_style(
+            &props.without_interaction_meta(),
+            props.hover.as_deref(),
+            props.pressed.as_deref(),
+            props.focused.as_deref(),
+            Interaction::Pressed,
+            true,
+        );
+        assert_eq!(resolved.background_color.as_deref(), Some("#222"));
+        assert_eq!(resolved.border_color.as_deref(), Some("#4af"));
+    }
+
+    #[test]
+    fn test_transition_object_and_merge() {
+        let props: StyleProps = serde_json::from_str(
+            r#"{"backgroundColor":"red","opacity":0.5,"transition":{"backgroundColor":100,"opacity":200}}"#,
+        )
+        .unwrap();
+        assert!(
+            (props.transition.duration_secs("backgroundColor").unwrap() - 0.1).abs() < 0.001
+        );
+        assert!((props.transition.duration_secs("opacity").unwrap() - 0.2).abs() < 0.001);
+
+        let multi = parse_transition_string("backgroundColor 100ms, opacity 0.2s");
+        assert!((multi.duration_secs("opacity").unwrap() - 0.2).abs() < 0.001);
+
+        let base: StyleProps =
+            serde_json::from_str(r##"{"backgroundColor":"#333","width":100}"##).unwrap();
+        let overlay: StyleProps =
+            serde_json::from_str(r##"{"backgroundColor":"#555"}"##).unwrap();
+        let merged = merge_style_props(&base, &overlay);
+        assert_eq!(merged.background_color.as_deref(), Some("#555"));
+        assert_eq!(merged.width.as_ref().unwrap().0, "100px");
+    }
+
+    #[test]
+    fn test_unknown_style_prop_captured() {
+        let mut props: StyleProps =
+            serde_json::from_str(r#"{"backgroundColor":"red","notARealProp":true}"#).unwrap();
+        assert!(props.unknown.contains_key("notARealProp"));
+        props.finalize_parse();
+        assert!(props.unknown.is_empty());
+        assert_eq!(props.background_color.as_deref(), Some("red"));
     }
 }
